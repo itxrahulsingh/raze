@@ -231,75 +231,87 @@ else
 fi
 
 # ── Generate secret values ─────────────────────────────────────────────────────
-step "Generating secure credentials"
-
-gen_secret() { openssl rand -hex "$1"; }
-
-JWT_SECRET="$(gen_secret 32)"
-SECRET_KEY="$(gen_secret 32)"
-CSRF_SECRET="$(gen_secret 32)"
-POSTGRES_PASSWORD="$(gen_secret 16)"
-REDIS_PASSWORD="$(gen_secret 16)"
-MINIO_ROOT_PASSWORD="$(gen_secret 16)"
-QDRANT_API_KEY="$(gen_secret 24)"
-
-success "Generated JWT secret key"
-success "Generated PostgreSQL password"
-success "Generated Redis password"
-success "Generated MinIO root password"
-success "Generated Qdrant API key"
-
 # ── Copy and populate .env ─────────────────────────────────────────────────────
 step "Setting up environment file"
 
-if [ -f .env ]; then
-    warn ".env already exists — backing up to .env.bak"
-    cp .env .env.bak
-fi
+# Allow explicit regeneration when needed
+FORCE_ENV="${FORCE_ENV:-0}"
 
-cp .env.example .env
-
-# Detect server IP (prefer primary non-loopback interface)
-if [[ "$OS" == "linux" ]]; then
-    SERVER_IP="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)"
+if [ -f .env ] && [ "$FORCE_ENV" != "1" ]; then
+    warn ".env already exists — keeping it (set FORCE_ENV=1 to regenerate)"
 else
-    SERVER_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "127.0.0.1")"
-fi
-SERVER_IP="${SERVER_IP:-127.0.0.1}"
-info "Detected server IP: $SERVER_IP"
+    step "Generating secure credentials"
 
-# Helper to replace a value in .env (works on both Linux and macOS sed)
-set_env() {
-    local key="$1"
-    local value="$2"
-    if [[ "$OS" == "macos" ]]; then
-        sed -i '' "s|^${key}=.*|${key}=${value}|" .env
-    else
-        sed -i "s|^${key}=.*|${key}=${value}|" .env
+    gen_secret() { openssl rand -hex "$1"; }
+
+    JWT_SECRET="$(gen_secret 32)"
+    SECRET_KEY="$(gen_secret 32)"
+    CSRF_SECRET="$(gen_secret 32)"
+    POSTGRES_PASSWORD="$(gen_secret 16)"
+    REDIS_PASSWORD="$(gen_secret 16)"
+    MINIO_ROOT_PASSWORD="$(gen_secret 16)"
+    QDRANT_API_KEY="$(gen_secret 24)"
+
+    success "Generated JWT secret key"
+    success "Generated PostgreSQL password"
+    success "Generated Redis password"
+    success "Generated MinIO root password"
+    success "Generated Qdrant API key"
+
+    if [ -f .env ]; then
+        warn ".env already exists — backing up to .env.bak"
+        cp .env .env.bak
     fi
-}
 
-set_env "SERVER_IP"             "$SERVER_IP"
-set_env "JWT_SECRET_KEY"        "$JWT_SECRET"
-set_env "SECRET_KEY"            "$SECRET_KEY"
-set_env "CSRF_SECRET"           "$CSRF_SECRET"
-set_env "POSTGRES_PASSWORD"     "$POSTGRES_PASSWORD"
-set_env "REDIS_PASSWORD"        "$REDIS_PASSWORD"
-set_env "MINIO_ROOT_PASSWORD"   "$MINIO_ROOT_PASSWORD"
-set_env "QDRANT_API_KEY"        "$QDRANT_API_KEY"
+    cp .env.example .env
 
-# Update composite URLs that embed the generated passwords
-set_env "DATABASE_URL" "postgresql+asyncpg://raze:${POSTGRES_PASSWORD}@postgres:5432/raze"
-set_env "REDIS_URL"    "redis://:${REDIS_PASSWORD}@redis:6379/0"
-set_env "CELERY_BROKER_URL"  "redis://:${REDIS_PASSWORD}@redis:6379/1"
-set_env "CELERY_RESULT_BACKEND" "redis://:${REDIS_PASSWORD}@redis:6379/2"
-set_env "NEXT_PUBLIC_API_URL"  "http://${SERVER_IP}/api"
-set_env "NEXT_PUBLIC_WS_URL"   "ws://${SERVER_IP}/ws"
-set_env "MINIO_EXTERNAL_URL"   "http://${SERVER_IP}:9000"
-set_env "CORS_ORIGINS"         "http://${SERVER_IP},http://${SERVER_IP}:3000,http://localhost,http://localhost:3000"
-set_env "ALLOWED_HOSTS"        "${SERVER_IP},localhost,127.0.0.1"
+    # Detect server IP (prefer primary non-loopback interface)
+    if [[ "$OS" == "linux" ]]; then
+        SERVER_IP="$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)"
+    else
+        SERVER_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "127.0.0.1")"
+    fi
+    SERVER_IP="${SERVER_IP:-127.0.0.1}"
+    info "Detected server IP: $SERVER_IP"
 
-success ".env configured with generated credentials and server IP ($SERVER_IP)"
+    # Helper to replace a value in .env (works on both Linux and macOS sed)
+    set_env() {
+        local key="$1"
+        local value="$2"
+        if [[ "$OS" == "macos" ]]; then
+            sed -i '' "s|^${key}=.*|${key}=${value}|" .env
+        else
+            sed -i "s|^${key}=.*|${key}=${value}|" .env
+        fi
+    }
+
+    set_env "SERVER_IP"             "$SERVER_IP"
+    set_env "JWT_SECRET_KEY"        "$JWT_SECRET"
+    set_env "SECRET_KEY"            "$SECRET_KEY"
+    set_env "CSRF_SECRET"           "$CSRF_SECRET"
+    set_env "POSTGRES_PASSWORD"     "$POSTGRES_PASSWORD"
+    set_env "REDIS_PASSWORD"        "$REDIS_PASSWORD"
+    set_env "MINIO_ROOT_PASSWORD"   "$MINIO_ROOT_PASSWORD"
+    set_env "QDRANT_API_KEY"        "$QDRANT_API_KEY"
+
+    # Update composite URLs that embed the generated passwords
+    set_env "DATABASE_URL" "postgresql+asyncpg://raze:${POSTGRES_PASSWORD}@postgres:5432/raze"
+    set_env "REDIS_URL"    "redis://:${REDIS_PASSWORD}@redis:6379/0"
+    set_env "CELERY_BROKER_URL"  "redis://:${REDIS_PASSWORD}@redis:6379/1"
+    set_env "CELERY_RESULT_BACKEND" "redis://:${REDIS_PASSWORD}@redis:6379/2"
+    set_env "NEXT_PUBLIC_API_URL"  "http://${SERVER_IP}/api"
+    set_env "NEXT_PUBLIC_WS_URL"   "ws://${SERVER_IP}/ws"
+    set_env "MINIO_EXTERNAL_URL"   "http://${SERVER_IP}:9000"
+    set_env "CORS_ORIGINS"         "http://${SERVER_IP},http://${SERVER_IP}:3000,http://localhost,http://localhost:3000"
+    set_env "ALLOWED_HOSTS"        "${SERVER_IP},localhost,127.0.0.1"
+
+    success ".env configured with generated credentials and server IP ($SERVER_IP)"
+fi
+
+# Load .env for later steps (health checks, migrations)
+set -a
+source .env
+set +a
 
 # ── Pull images ───────────────────────────────────────────────────────────────
 step "Pulling Docker base images"
