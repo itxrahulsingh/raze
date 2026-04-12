@@ -308,10 +308,16 @@ else
     success ".env configured with generated credentials and server IP ($SERVER_IP)"
 fi
 
-# Load .env for later steps (health checks, migrations)
-set -a
-source .env
-set +a
+# Load required values from .env without sourcing (handles spaces safely)
+get_env() {
+    local key="$1"
+    if [ -f .env ]; then
+        grep -E "^${key}=" .env | head -1 | cut -d= -f2-
+    fi
+}
+
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(get_env POSTGRES_PASSWORD)}"
+REDIS_PASSWORD="${REDIS_PASSWORD:-$(get_env REDIS_PASSWORD)}"
 
 # ── Pull images ───────────────────────────────────────────────────────────────
 step "Pulling Docker base images"
