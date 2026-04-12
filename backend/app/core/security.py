@@ -15,10 +15,11 @@ import hashlib
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from functools import wraps
+from typing import Any, Callable
 
 import structlog
-from fastapi import Depends, HTTPException, Security, status
+from fastapi import Depends, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer, APIKeyHeader
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -27,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_db, get_redis
 from app.models.user import APIKey, User, UserRole
 
 settings = get_settings()
@@ -335,6 +336,69 @@ class RateLimiter:
         """Clear all rate-limit entries for *identifier* (e.g. after account unlock)."""
         await self._redis.delete(f"raze:rl:{identifier}")
 
+    def decorator(
+        self,
+        limit: int,
+        window_seconds: int = 60,
+        identifier_func: Callable | None = None,
+    ) -> Callable:
+        """
+        Decorator for async route handlers with automatic user-based rate limiting.
+
+        Parameters
+        ----------
+        limit           : maximum requests allowed in window_seconds
+        window_seconds  : size of the sliding window (default 60 for 1 minute)
+        identifier_func : optional callable to extract rate limit identifier from request context
+                         if None, uses user.id from request state
+
+        Usage::
+
+            limiter = RateLimiter(redis)
+
+            @router.post("/chat/message")
+            @limiter.decorator(limit=30, window_seconds=60)
+            async def send_message(request: Request, ...):
+                ...
+        """
+
+        def decorator_wrapper(func: Callable) -> Callable:
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs) -> Any:
+                # Extract identifier - look for 'request' in kwargs or try to get from user
+                request = kwargs.get("request", None)
+                if request and hasattr(request, "state") and hasattr(request.state, "user"):
+                    identifier = f"user:{request.state.user.id}:{func.__name__}"
+                elif identifier_func:
+                    identifier = identifier_func(*args, **kwargs)
+                else:
+                    # Fallback to checking for current_user parameter
+                    identifier = None
+                    for arg in args:
+                        if isinstance(arg, User):
+                            identifier = f"user:{arg.id}:{func.__name__}"
+                            break
+                    if not identifier:
+                        # Try kwargs
+                        for val in kwargs.values():
+                            if isinstance(val, User):
+                                identifier = f"user:{val.id}:{func.__name__}"
+                                break
+
+                if identifier:
+                    await self.check(
+                        identifier,
+                        limit,
+                        window_seconds,
+                        raise_on_exceeded=True,
+                    )
+
+                return await func(*args, **kwargs)
+
+            return async_wrapper
+
+        return decorator_wrapper
+
 
 async def check_rate_limit(
     redis: Redis,
@@ -349,3 +413,42 @@ async def check_rate_limit(
     effective_limit = limit if limit is not None else settings.rate_limit_default_per_minute
     limiter = RateLimiter(redis)
     return await limiter.check(identifier, effective_limit, window_seconds)
+
+
+# ─── Rate limiting dependencies ──────────────────────────────────────────────
+
+def rate_limit(limit: int, window_seconds: int = 60, endpoint_name: str = "") -> Callable:
+    """
+    Create a FastAPI dependency for rate limiting.
+
+    Usage::
+
+        @router.post("/chat/message")
+        async def send_message(
+            current_user: User = Depends(get_current_user),
+            _: None = Depends(rate_limit(30, 60, "chat_message")),
+            db: AsyncSession = Depends(get_db),
+        ):
+            ...
+    """
+
+    async def _rate_limit_dep(
+        request: Request,
+        redis: Redis = Depends(get_redis),
+    ) -> None:
+        # Try to extract user from request state
+        current_user: User | None = None
+        if hasattr(request, "state") and hasattr(request.state, "user"):
+            current_user = request.state.user
+
+        # Generate identifier - use user ID if available, otherwise use IP
+        if current_user:
+            identifier = f"user:{current_user.id}:{endpoint_name or 'api'}"
+        else:
+            # Fallback to IP-based rate limiting for unauthenticated endpoints
+            client_host = request.client.host if hasattr(request, "client") and request.client else "unknown"
+            identifier = f"ip:{client_host}:{endpoint_name or 'api'}"
+
+        await check_rate_limit(redis, identifier, limit, window_seconds)
+
+    return _rate_limit_dep

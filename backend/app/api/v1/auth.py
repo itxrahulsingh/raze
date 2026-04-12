@@ -44,6 +44,7 @@ from app.schemas.auth import (
     UserUpdate,
 )
 from app.core.security import get_current_user
+from app.api.v1.deps import apply_rate_limit
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
@@ -104,6 +105,7 @@ def _generate_raw_api_key(length: int = 64) -> str:
 )
 async def login(
     body: LoginRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """
@@ -111,7 +113,12 @@ async def login(
 
     Account lockout is enforced after 5 consecutive failed attempts;
     the lock lasts 15 minutes.
+
+    Rate limited: 5 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_login", 5, 60)
+
     settings = get_settings()
 
     result = await db.execute(
@@ -187,13 +194,19 @@ async def login(
 )
 async def refresh_token(
     body: RefreshTokenRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """
     Validate the refresh token (checking the Redis blacklist) and issue
     a new access token.  The refresh token itself is NOT rotated here;
     call /logout to invalidate it explicitly.
+
+    Rate limited: 30 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_refresh", 30, 60)
+
     settings = get_settings()
     credentials_error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -253,12 +266,18 @@ async def refresh_token(
 )
 async def logout(
     body: RefreshTokenRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
 ) -> None:
     """
     Decode the refresh token and add its JTI to the Redis blacklist,
     effectively invalidating it for the remainder of its TTL.
+
+    Rate limited: 30 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_logout", 30, 60, current_user)
+
     settings = get_settings()
     try:
         payload = jwt.decode(
@@ -294,9 +313,17 @@ async def logout(
     summary="Get current user profile",
 )
 async def get_me(
+    request: Request,
     current_user: User = Depends(get_current_user),
 ) -> User:
-    """Return the authenticated user's profile."""
+    """
+    Return the authenticated user's profile.
+
+    Rate limited: 30 requests per minute
+    """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_me_get", 30, 60, current_user)
+
     return current_user
 
 
@@ -310,13 +337,19 @@ async def get_me(
 )
 async def update_me(
     body: UserUpdate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """
     Update mutable profile fields.  Email and username uniqueness is
     enforced at the database level; conflicts are surfaced as 409.
+
+    Rate limited: 30 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_me_put", 30, 60, current_user)
+
     update_data: dict = body.model_dump(exclude_none=True)
 
     # Non-admins cannot change their own role
@@ -375,10 +408,18 @@ async def update_me(
 )
 async def change_password(
     body: PasswordChangeRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Verify current password, then replace it with the new one."""
+    """
+    Verify current password, then replace it with the new one.
+
+    Rate limited: 30 requests per minute
+    """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_change_password", 30, 60, current_user)
+
     if not _verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -406,13 +447,19 @@ async def change_password(
 )
 async def create_api_key(
     body: APIKeyCreate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> APIKeyCreateResponse:
     """
     Generate a cryptographically random API key, store its SHA-256 hash,
     and return the raw key exactly once.  The caller must store it safely.
+
+    Rate limited: 30 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_create_api_key", 30, 60, current_user)
+
     settings = get_settings()
     raw_key = _generate_raw_api_key(settings.api_key_length)
     prefix = raw_key[:8]
@@ -459,10 +506,18 @@ async def create_api_key(
     summary="List own API keys",
 )
 async def list_api_keys(
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> APIKeyListResponse:
-    """Return all API keys belonging to the authenticated user."""
+    """
+    Return all API keys belonging to the authenticated user.
+
+    Rate limited: 30 requests per minute
+    """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_list_api_keys", 30, 60, current_user)
+
     result = await db.execute(
         select(APIKey)
         .where(APIKey.user_id == current_user.id)
@@ -482,12 +537,18 @@ async def list_api_keys(
 )
 async def revoke_api_key(
     key_id: uuid.UUID,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """
     Deactivate an API key.  Only the owning user (or an admin) may revoke it.
+
+    Rate limited: 30 requests per minute
     """
+    # Apply rate limiting
+    await apply_rate_limit(request, "auth_revoke_api_key", 30, 60, current_user)
+
     result = await db.execute(select(APIKey).where(APIKey.id == key_id))
     api_key: APIKey | None = result.scalar_one_or_none()
 

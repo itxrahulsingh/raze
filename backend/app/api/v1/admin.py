@@ -1,5 +1,5 @@
 """Admin control panel API routes."""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -18,14 +18,14 @@ async def get_dashboard(
     db: AsyncSession = Depends(get_db)
 ):
     """Get admin dashboard overview."""
-    # Stats
-    conv_result = await db.execute(func.count(Conversation.id))
+    # Stats - properly wrapped count queries with select()
+    conv_result = await db.execute(select(func.count(Conversation.id)))
     total_convs = conv_result.scalar() or 0
 
-    msg_result = await db.execute(func.count(Message.id))
+    msg_result = await db.execute(select(func.count(Message.id)))
     total_msgs = msg_result.scalar() or 0
 
-    user_result = await db.execute(func.count(User.id))
+    user_result = await db.execute(select(func.count(User.id)))
     total_users = user_result.scalar() or 0
 
     return {
@@ -78,9 +78,12 @@ async def update_ai_config(
     result = await db.execute(select(AIConfig).where(AIConfig.id == config_id))
     config = result.scalar_one_or_none()
     if not config:
-        raise HTTPException(status_code=404)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AI configuration not found"
+        )
 
-    for field, value in data.dict(exclude_unset=True).items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(config, field, value)
 
     await db.commit()
@@ -96,7 +99,10 @@ async def delete_ai_config(
     result = await db.execute(select(AIConfig).where(AIConfig.id == config_id))
     config = result.scalar_one_or_none()
     if not config:
-        raise HTTPException(status_code=404)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AI configuration not found"
+        )
 
     await db.delete(config)
     await db.commit()
@@ -116,7 +122,10 @@ async def set_default_config(
     result = await db.execute(select(AIConfig).where(AIConfig.id == config_id))
     config = result.scalar_one_or_none()
     if not config:
-        raise HTTPException(status_code=404)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="AI configuration not found"
+        )
 
     config.is_default = True
     await db.commit()

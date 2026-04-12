@@ -257,9 +257,9 @@ async def create_knowledge_source(
 async def list_sources(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
-    status_filter: str | None = Query(default=None, alias="status"),
-    source_type: str | None = Query(default=None, alias="type"),
-    tag: str | None = Query(default=None),
+    status_filter: KnowledgeSourceStatus | None = Query(default=None, alias="status"),
+    source_type: KnowledgeSourceType | None = Query(default=None, alias="type"),
+    tag: str | None = Query(default=None, max_length=50),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceListResponse:
@@ -267,9 +267,9 @@ async def list_sources(
     q = select(KnowledgeSource).where(KnowledgeSource.is_active.is_(True))
 
     if status_filter:
-        q = q.where(KnowledgeSource.status == status_filter)
+        q = q.where(KnowledgeSource.status == status_filter.value)
     if source_type:
-        q = q.where(KnowledgeSource.type == source_type)
+        q = q.where(KnowledgeSource.type == source_type.value)
     if tag:
         q = q.where(KnowledgeSource.tags.contains([tag]))
 

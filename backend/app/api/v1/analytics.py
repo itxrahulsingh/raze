@@ -1,5 +1,5 @@
 """Analytics and observability API routes."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timedelta
@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from app.api.v1 import deps
 from app.database import get_db
 from app.models.analytics import ObservabilityLog, UsageMetrics, UserSession
+from app.schemas.analytics import DateRangeRequest
 
 router = APIRouter()
 
@@ -34,16 +35,40 @@ async def get_analytics_overview(
 
 @router.get("/usage")
 async def get_usage_metrics(
-    start_date: str = Query(...),
-    end_date: str = Query(...),
+    start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
+    end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get usage metrics by date range."""
+    """Get usage metrics by date range with validation."""
+    # Parse and validate dates
+    from datetime import date
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid date format. Expected YYYY-MM-DD: {str(e)}"
+        )
+
+    # Validate date range
+    if start > end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="start_date must be before or equal to end_date"
+        )
+
+    if (end - start).days > 366:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Date range cannot exceed 366 days"
+        )
+
     result = await db.execute(
         select(UsageMetrics).where(
-            UsageMetrics.date >= start_date,
-            UsageMetrics.date <= end_date
+            UsageMetrics.date >= start,
+            UsageMetrics.date <= end
         )
     )
     return result.scalars().all()
