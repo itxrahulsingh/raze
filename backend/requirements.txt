@@ -1,3 +1,7 @@
+# ─── Core Constraint ──────────────────────────────────────────────────────────
+# Pinned first to ensure all dependencies resolve against this
+numpy==1.26.4
+
 # ─── Web Framework ───────────────────────────────────────────────────────────
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
@@ -10,14 +14,14 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 alembic==1.14.0
 psycopg2-binary==2.9.10
-pgvector==0.3.6
+pgvector==0.2.0
 
 # ─── Cache / Queue ───────────────────────────────────────────────────────────
 redis[hiredis]==5.2.1
 celery==5.4.0
 
 # ─── Vector Store ────────────────────────────────────────────────────────────
-qdrant-client==1.9.1
+qdrant-client==1.7.0
 
 # ─── Auth / Security ─────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
@@ -25,6 +29,7 @@ passlib[bcrypt]==1.7.4
 
 # ─── Settings ────────────────────────────────────────────────────────────────
 pydantic-settings==2.7.0
+pydantic==2.7.0
 
 # ─── LLM Providers ───────────────────────────────────────────────────────────
 openai==1.59.6
@@ -32,11 +37,9 @@ anthropic==0.42.0
 google-generativeai==0.8.3
 tiktoken==0.8.0
 
-# ─── LangChain Ecosystem ─────────────────────────────────────────────────────
-langchain==0.0.354
-langchain-openai==0.0.8
-langchain-anthropic==0.0.8
-langchain-community==0.0.21
+# ─── LangChain Ecosystem (stable version) ──────────────────────────────────
+langchain==0.0.350
+langchain-community==0.0.20
 
 # ─── Embeddings ──────────────────────────────────────────────────────────────
 sentence-transformers==2.2.2
@@ -48,7 +51,6 @@ beautifulsoup4==4.12.3
 pillow==10.2.0
 lxml==5.0.1
 aiofiles==24.1.0
-numpy>=1.26.0,<2.0.0
 
 # ─── HTTP ────────────────────────────────────────────────────────────────────
 requests==2.32.3
@@ -66,5 +68,4 @@ tenacity==9.0.0
 cachetools==5.5.0
 
 # ─── Utils ───────────────────────────────────────────────────────────────────
-pydantic==2.7.0
 python-dotenv==1.0.0
