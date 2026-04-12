@@ -1,0 +1,25 @@
+{
+  "name": "@raze/chat-sdk",
+  "version": "1.0.0",
+  "description": "Embeddable chat widget SDK for RAZE Enterprise AI OS",
+  "main": "dist/raze-chat.umd.js",
+  "module": "dist/raze-chat.es.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "vite build",
+    "dev": "vite",
+    "preview": "vite preview"
+  },
+  "keywords": ["chat", "ai", "raze", "widget", "sdk"],
+  "author": "RAZE Team",
+  "license": "MIT",
+  "dependencies": {
+    "marked": "^12.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0",
+    "vite": "^5.1.0",
+    "vite-plugin-dts": "^3.9.1"
+  }
+}
