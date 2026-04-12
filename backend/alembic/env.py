@@ -29,7 +29,7 @@ def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
     settings = get_settings()
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = settings.database_url
 
     connectable = engine_from_config(
         configuration,
@@ -50,7 +50,7 @@ async def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
     settings = get_settings()
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = settings.database_url
     configuration["sqlalchemy.echo"] = False
 
     connectable = engine_from_config(
