@@ -1,5 +1,5 @@
 # ─── Web Framework ───────────────────────────────────────────────────────────
-fastapi[all]==0.115.6
+fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 jinja2==3.1.5
@@ -17,7 +17,7 @@ redis[hiredis]==5.2.1
 celery==5.4.0
 
 # ─── Vector Store ────────────────────────────────────────────────────────────
-qdrant-client==1.12.1
+qdrant-client==1.9.1
 
 # ─── Auth / Security ─────────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
@@ -33,25 +33,22 @@ google-generativeai==0.8.3
 tiktoken==0.8.0
 
 # ─── LangChain Ecosystem ─────────────────────────────────────────────────────
-langchain==0.3.14
-langchain-openai==0.3.0
-langchain-anthropic==0.3.3
-langchain-google-genai==2.0.8
-langchain-community==0.3.14
-langchain-qdrant==0.2.0
+langchain==0.0.354
+langchain-openai==0.0.8
+langchain-anthropic==0.0.8
+langchain-community==0.0.21
 
 # ─── Embeddings ──────────────────────────────────────────────────────────────
-sentence-transformers==3.3.1
-numpy==2.2.1
+sentence-transformers==2.2.2
 
 # ─── Document Parsing ────────────────────────────────────────────────────────
-pypdf==5.1.0
-python-docx==1.1.2
+pypdf==4.2.0
+python-docx==0.8.11
 beautifulsoup4==4.12.3
-unstructured==0.16.11
-pillow==11.1.0
-python-magic==0.4.27
+pillow==10.2.0
+lxml==5.0.1
 aiofiles==24.1.0
+numpy>=1.26.0,<2.0.0
 
 # ─── HTTP ────────────────────────────────────────────────────────────────────
 requests==2.32.3
@@ -67,3 +64,7 @@ prometheus-client==0.21.1
 # ─── Reliability ─────────────────────────────────────────────────────────────
 tenacity==9.0.0
 cachetools==5.5.0
+
+# ─── Utils ───────────────────────────────────────────────────────────────────
+pydantic==2.7.0
+python-dotenv==1.0.0
