@@ -9,7 +9,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 import structlog
 
 from app.config import get_settings
-from app.database import init_db, close_db, init_redis, close_redis
+from app.database import connect_db, disconnect_db, connect_redis, disconnect_redis
 from app.api.v1 import auth, chat, knowledge, memory, tools, admin, analytics, sdk
 
 settings = get_settings()
@@ -42,16 +42,16 @@ async def lifespan(app: FastAPI):
     logger.info("Starting RAZE AI OS...")
 
     # Startup
-    await init_db()
-    await init_redis()
+    await connect_db()
+    await connect_redis()
     logger.info("RAZE AI OS started successfully")
 
     yield
 
     # Shutdown
     logger.info("Shutting down RAZE AI OS...")
-    await close_db()
-    await close_redis()
+    await disconnect_db()
+    await disconnect_redis()
     logger.info("RAZE AI OS shut down successfully")
 
 
@@ -66,7 +66,7 @@ app = FastAPI(
 # Add middlewares
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

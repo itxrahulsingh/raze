@@ -13,15 +13,14 @@ router = APIRouter()
 
 @router.get("/", response_model=list[MemoryResponse])
 async def list_memories(
-    user_id: str = Query(...),
     memory_type: str | None = Query(None),
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0, le=1000),
+    limit: int = Query(50, ge=1, le=100),
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List memories."""
-    stmt = select(Memory).where(Memory.user_id == user_id)
+    """List memories for current user."""
+    stmt = select(Memory).where(Memory.user_id == current_user.id)
     if memory_type:
         stmt = stmt.where(Memory.type == memory_type)
     stmt = stmt.offset(skip).limit(limit)
@@ -49,13 +48,18 @@ async def create_memory(
 @router.get("/{memory_id}", response_model=MemoryResponse)
 async def get_memory(
     memory_id: str,
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get memory detail."""
-    result = await db.execute(select(Memory).where(Memory.id == memory_id))
+    """Get memory detail - only own memories."""
+    result = await db.execute(
+        select(Memory).where(
+            (Memory.id == memory_id) & (Memory.user_id == current_user.id)
+        )
+    )
     memory = result.scalar_one_or_none()
     if not memory:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Memory not found")
     return memory
 
 @router.put("/{memory_id}", response_model=MemoryResponse)

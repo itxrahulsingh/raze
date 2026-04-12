@@ -37,24 +37,30 @@ async def create_tool(
 
 @router.get("/", response_model=list[ToolResponse])
 async def list_tools(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0, le=1000),
+    limit: int = Query(50, ge=1, le=100),
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """List tools."""
-    result = await db.execute(select(Tool).offset(skip).limit(limit))
+    """List available tools - authenticated users only."""
+    result = await db.execute(
+        select(Tool).where(Tool.is_active == True).offset(skip).limit(limit)
+    )
     return result.scalars().all()
 
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: str,
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get tool detail."""
-    result = await db.execute(select(Tool).where(Tool.id == tool_id))
+    """Get tool detail - authenticated users only."""
+    result = await db.execute(
+        select(Tool).where((Tool.id == tool_id) & (Tool.is_active == True))
+    )
     tool = result.scalar_one_or_none()
     if not tool:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Tool not found")
     return tool
 
 @router.put("/{tool_id}", response_model=ToolResponse)

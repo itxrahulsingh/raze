@@ -1,5 +1,5 @@
 """Common API dependencies."""
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import jwt
@@ -11,26 +11,37 @@ from app.config import get_settings
 settings = get_settings()
 
 async def get_current_user(
-    token: str = None,
+    authorization: str = Header(None),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Get current authenticated user."""
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+    """Get current authenticated user from Bearer token."""
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing or invalid authorization header"
+        )
+
+    token = authorization.replace("Bearer ", "")
 
     try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=["HS256"])
         user_id: str = payload.get("sub")
         if user_id is None:
-            raise HTTPException(status_code=401)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
     except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
 
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
 
     if user is None:
-        raise HTTPException(status_code=401)
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     return user
 
@@ -39,5 +50,8 @@ async def get_current_admin(
 ) -> User:
     """Get current admin user."""
     if current_user.role not in ["superadmin", "admin"]:
-        raise HTTPException(status_code=403, detail="Insufficient permissions")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Insufficient permissions"
+        )
     return current_user
