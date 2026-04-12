@@ -37,12 +37,12 @@ anthropic==0.42.0
 google-generativeai==0.8.3
 tiktoken==0.8.0
 
-# ─── LangChain Ecosystem (stable version) ──────────────────────────────────
-langchain==0.0.350
-langchain-community==0.0.20
+# ─── LangChain Ecosystem (unused; removed to avoid conflicts) ───────────────
+# langchain==0.0.350
+# langchain-community==0.0.20
 
-# ─── Embeddings ──────────────────────────────────────────────────────────────
-sentence-transformers==2.2.2
+# ─── Embeddings (unused; removed to avoid heavy deps) ────────────────────────
+# sentence-transformers==2.2.2
 
 # ─── Document Parsing ────────────────────────────────────────────────────────
 pypdf==4.2.0
@@ -64,7 +64,7 @@ structlog==24.4.0
 prometheus-client==0.21.1
 
 # ─── Reliability ─────────────────────────────────────────────────────────────
-tenacity==9.0.0
+tenacity==8.2.3
 cachetools==5.5.0
 
 # ─── Utils ───────────────────────────────────────────────────────────────────
