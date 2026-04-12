@@ -17,6 +17,9 @@ COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
 
+# Ensure /app/public exists so runner COPY doesn't fail when folder is absent
+RUN mkdir -p /app/public
+
 RUN npm run build
 
 # ── Runner Stage ──────────────────────────────────────────────────────────────
