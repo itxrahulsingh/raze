@@ -5,6 +5,7 @@ All settings are loaded from environment variables (or a .env file).
 
 from __future__ import annotations
 
+import json
 import secrets
 from enum import Enum
 from functools import lru_cache
@@ -40,6 +41,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        enable_decoding=False,
     )
 
     # ── Application ────────────────────────────────────────────────────────────
@@ -201,6 +203,14 @@ class Settings(BaseSettings):
     @classmethod
     def parse_cors_origins(cls, v: Any) -> list[str]:
         if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        return [str(origin).strip() for origin in parsed if str(origin).strip()]
+                except json.JSONDecodeError:
+                    pass
             return [origin.strip() for origin in v.split(",") if origin.strip()]
         return v
 
@@ -208,6 +218,18 @@ class Settings(BaseSettings):
     @classmethod
     def parse_file_types(cls, v: Any) -> list[str]:
         if isinstance(v, str):
+            stripped = v.strip()
+            if stripped.startswith("["):
+                try:
+                    parsed = json.loads(stripped)
+                    if isinstance(parsed, list):
+                        return [
+                            str(ft).strip().lstrip(".")
+                            for ft in parsed
+                            if str(ft).strip()
+                        ]
+                except json.JSONDecodeError:
+                    pass
             return [ft.strip().lstrip(".") for ft in v.split(",") if ft.strip()]
         return v
 
