@@ -121,28 +121,32 @@ The database starts empty. Create a superadmin via psql:
 
 ```bash
 docker compose exec -T postgres psql -U raze -d raze <<'SQL'
-INSERT INTO public."user" (
-  id, email, username, hashed_password, role, is_active, metadata
+INSERT INTO public.users (
+  id, email, username, hashed_password, full_name, role, is_active, is_verified, user_metadata
 ) VALUES (
-  gen_random_uuid()::text,
+  gen_random_uuid(),
   'admin@yourcompany.com',
   'admin',
   -- bcrypt hash of 'ChangeMe123!' — replace immediately after first login
   '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCi1O7EUmg7BM.s9nOGIEU.',
+  'System Administrator',
   'superadmin',
+  true,
   true,
   '{}'::jsonb
 )
 ON CONFLICT (email) DO UPDATE SET
   username = EXCLUDED.username,
   hashed_password = EXCLUDED.hashed_password,
+  full_name = EXCLUDED.full_name,
   role = EXCLUDED.role,
   is_active = EXCLUDED.is_active,
-  metadata = EXCLUDED.metadata;
+  is_verified = EXCLUDED.is_verified,
+  user_metadata = EXCLUDED.user_metadata;
 SQL
 
 # Verify
-docker compose exec -T postgres psql -U raze -d raze -c 'SELECT email, username, role, is_active FROM public."user";'
+docker compose exec -T postgres psql -U raze -d raze -c 'SELECT email, username, role, is_active FROM public.users;'
 ```
 
 Then log in via `POST /api/v1/auth/login` and immediately change your password via `POST /api/v1/auth/change-password`.
@@ -172,6 +176,16 @@ Migrations run automatically on backend container start. To run manually:
 
 ```bash
 docker compose exec backend alembic upgrade head
+```
+
+If you are upgrading from an older build that created singular tables
+(`user`, `conversation`, etc.), do a clean reset once so the new schema is
+created correctly:
+
+```bash
+docker compose down
+docker volume rm raze_postgres_data
+docker compose up -d --build
 ```
 
 ---
