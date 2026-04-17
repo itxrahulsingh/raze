@@ -44,8 +44,12 @@ class ToolCreate(BaseModel):
     display_name: str | None = Field(default=None, max_length=256)
     description: str = Field(..., min_length=1, max_length=4096)
     type: ToolType = Field(default=ToolType.http_api)
-    schema: dict[str, Any] = Field(
-        ..., description="OpenAI function-calling JSON schema"
+    tool_schema: dict[str, Any] = Field(
+        ...,
+        alias="schema",
+        validation_alias="schema",
+        serialization_alias="schema",
+        description="OpenAI function-calling JSON schema",
     )
     endpoint_url: str | None = Field(
         default=None, description="Required when type=http_api"
@@ -67,7 +71,7 @@ class ToolCreate(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=20)
     tool_metadata: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("schema")
+    @field_validator("tool_schema")
     @classmethod
     def validate_schema(cls, v: dict[str, Any]) -> dict[str, Any]:
         if "name" not in v:
@@ -81,7 +85,7 @@ class ToolCreate(BaseModel):
     def normalise_tags(cls, v: list[str]) -> list[str]:
         return [t.strip().lower() for t in v if t.strip()]
 
-    model_config = {"str_strip_whitespace": True}
+    model_config = {"str_strip_whitespace": True, "populate_by_name": True}
 
 
 class ToolUpdate(BaseModel):
@@ -89,7 +93,12 @@ class ToolUpdate(BaseModel):
 
     display_name: str | None = Field(default=None, max_length=256)
     description: str | None = Field(default=None, min_length=1, max_length=4096)
-    schema: dict[str, Any] | None = None
+    tool_schema: dict[str, Any] | None = Field(
+        default=None,
+        alias="schema",
+        validation_alias="schema",
+        serialization_alias="schema",
+    )
     endpoint_url: str | None = None
     method: str | None = Field(
         default=None, pattern="^(GET|POST|PUT|PATCH|DELETE)$"
@@ -111,7 +120,7 @@ class ToolUpdate(BaseModel):
             return v
         return [t.strip().lower() for t in v if t.strip()]
 
-    model_config = {"str_strip_whitespace": True}
+    model_config = {"str_strip_whitespace": True, "populate_by_name": True}
 
 
 class ToolResponse(BaseModel):
@@ -120,7 +129,11 @@ class ToolResponse(BaseModel):
     display_name: str | None
     description: str
     type: ToolType
-    schema: dict[str, Any]
+    tool_schema: dict[str, Any] = Field(
+        alias="schema",
+        validation_alias="schema",
+        serialization_alias="schema",
+    )
     endpoint_url: str | None
     method: str
     timeout_seconds: int
@@ -139,7 +152,7 @@ class ToolResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "populate_by_name": True}
 
 
 class ToolListResponse(BaseModel):

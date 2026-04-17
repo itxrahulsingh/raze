@@ -25,7 +25,7 @@ async def create_tool(
         name=data.name,
         description=data.description,
         type=data.type,
-        schema=data.schema,
+        schema=data.tool_schema,
         endpoint_url=data.endpoint_url,
         method=data.method,
         auth_type=data.auth_type,
@@ -84,7 +84,7 @@ async def update_tool(
     if not tool:
         raise HTTPException(status_code=404)
 
-    for field, value in data.model_dump(exclude_unset=True).items():
+    for field, value in data.model_dump(exclude_unset=True, by_alias=True).items():
         setattr(tool, field, value)
 
     await db.commit()

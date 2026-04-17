@@ -56,7 +56,7 @@ class AIConfigCreate(BaseModel):
     # Extra provider-specific params
     extra_params: dict[str, Any] = Field(default_factory=dict)
 
-    model_config = {"str_strip_whitespace": True}
+    model_config = {"str_strip_whitespace": True, "protected_namespaces": ()}
 
 
 class AIConfigUpdate(BaseModel):
@@ -87,7 +87,7 @@ class AIConfigUpdate(BaseModel):
     knowledge_enabled: bool | None = None
     extra_params: dict[str, Any] | None = None
 
-    model_config = {"str_strip_whitespace": True}
+    model_config = {"str_strip_whitespace": True, "protected_namespaces": ()}
 
 
 class AIConfigResponse(BaseModel):
@@ -119,7 +119,7 @@ class AIConfigResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class AIConfigListResponse(BaseModel):
@@ -199,6 +199,8 @@ class TopModel(BaseModel):
     total_tokens: int
     total_cost_usd: float
     avg_latency_ms: float
+
+    model_config = {"protected_namespaces": ()}
 
 
 class AdminDashboard(BaseModel):

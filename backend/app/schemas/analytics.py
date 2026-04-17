@@ -85,7 +85,7 @@ class ObservabilityLogResponse(BaseModel):
     log_metadata: dict[str, Any] | None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class ObservabilityLogListResponse(BaseModel):
@@ -112,6 +112,8 @@ class ObservabilityLogFilterRequest(BaseModel):
     end_date: datetime | None = None
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=50, ge=1, le=200)
+
+    model_config = {"protected_namespaces": ()}
 
 
 # ─── Usage Metrics ────────────────────────────────────────────────────────────
@@ -145,7 +147,7 @@ class UsageMetricsResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class UsageMetricsListResponse(BaseModel):

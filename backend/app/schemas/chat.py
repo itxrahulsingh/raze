@@ -159,7 +159,7 @@ class ChatResponse(BaseModel):
     memory_items_used: int = 0
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 # ─── Conversation ─────────────────────────────────────────────────────────────
@@ -219,7 +219,7 @@ class MessageResponse(BaseModel):
     msg_metadata: dict[str, Any] | None
     created_at: datetime
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "protected_namespaces": ()}
 
 
 class MessageListResponse(BaseModel):
