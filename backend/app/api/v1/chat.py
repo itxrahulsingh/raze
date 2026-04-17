@@ -499,10 +499,10 @@ async def stream_message(
     summary="List conversations (paginated)",
 )
 async def list_conversations(
+    request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status_filter: str | None = Query(default=None, alias="status"),
-    request: Request,
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationListResponse:

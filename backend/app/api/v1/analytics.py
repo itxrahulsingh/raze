@@ -37,9 +37,9 @@ async def get_analytics_overview(
 
 @router.get("/usage")
 async def get_usage_metrics(
+    request: Request,
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -158,9 +158,9 @@ async def get_knowledge_stats(
 
 @router.get("/observability")
 async def get_observability_logs(
+    request: Request,
     skip: int = 0,
     limit: int = 50,
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -190,9 +190,9 @@ async def get_observability_detail(
 
 @router.get("/sessions")
 async def get_session_analytics(
+    request: Request,
     skip: int = 0,
     limit: int = 50,
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -208,8 +208,8 @@ async def get_session_analytics(
 
 @router.post("/export")
 async def export_analytics(
-    format: str = Query("csv"),  # csv or json
     request: Request,
+    format: str = Query("csv"),  # csv or json
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):

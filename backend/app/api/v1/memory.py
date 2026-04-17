@@ -13,10 +13,10 @@ router = APIRouter()
 
 @router.get("/", response_model=list[MemoryResponse])
 async def list_memories(
+    request: Request,
     memory_type: str | None = Query(None),
     skip: int = Query(0, ge=0, le=1000),
     limit: int = Query(50, ge=1, le=100),
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):

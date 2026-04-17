@@ -145,9 +145,9 @@ async def set_default_config(
 
 @router.get("/users")
 async def list_users(
+    request: Request,
     skip: int = 0,
     limit: int = 50,
-    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):

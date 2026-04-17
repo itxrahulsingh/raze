@@ -39,9 +39,9 @@ async def create_tool(
 
 @router.get("/", response_model=list[ToolResponse])
 async def list_tools(
+    request: Request,
     skip: int = Query(0, ge=0, le=1000),
     limit: int = Query(50, ge=1, le=100),
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -127,10 +127,10 @@ async def test_tool(
 
 @router.get("/{tool_id}/executions")
 async def get_tool_executions(
+    request: Request,
     tool_id: str,
     skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=100),
-    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -146,9 +146,9 @@ async def get_tool_executions(
 
 @router.get("/executions")
 async def get_all_executions(
+    request: Request,
     skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=100),
-    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
