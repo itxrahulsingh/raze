@@ -32,6 +32,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Response,
     UploadFile,
     status,
 )
@@ -470,6 +471,8 @@ async def get_source(
 @router.delete(
     "/sources/{source_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     summary="Delete knowledge source",
 )
 async def delete_source(
@@ -786,6 +789,8 @@ async def update_chunk(
 @router.delete(
     "/chunks/{chunk_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     summary="Delete a specific chunk",
 )
 async def delete_chunk(

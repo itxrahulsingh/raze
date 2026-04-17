@@ -569,6 +569,8 @@ async def get_conversation(
 @router.delete(
     "/conversations/{conversation_id}",
     status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
     summary="Delete conversation",
 )
 async def delete_conversation(
