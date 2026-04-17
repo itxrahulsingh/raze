@@ -1,3 +1,3 @@
-FROM pgvector/pgvector:pg16-alpine as base
+FROM pgvector/pgvector:pg16 as base
 
-# This image already has pgvector pre-installed and optimized for PostgreSQL 16
+# Official pgvector image with PostgreSQL 16 and pgvector pre-installed
