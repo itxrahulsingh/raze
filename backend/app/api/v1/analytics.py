@@ -13,10 +13,12 @@ router = APIRouter()
 
 @router.get("/overview")
 async def get_analytics_overview(
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get analytics overview."""
+    await deps.apply_rate_limit(request, "analytics_overview", 120, 60, current_user)
     today = datetime.utcnow().strftime("%Y-%m-%d")
 
     result = await db.execute(
@@ -37,10 +39,12 @@ async def get_analytics_overview(
 async def get_usage_metrics(
     start_date: str = Query(..., description="Start date in YYYY-MM-DD format"),
     end_date: str = Query(..., description="End date in YYYY-MM-DD format"),
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get usage metrics by date range with validation."""
+    await deps.apply_rate_limit(request, "analytics_usage", 120, 60, current_user)
     # Parse and validate dates
     from datetime import date
     try:
@@ -75,10 +79,12 @@ async def get_usage_metrics(
 
 @router.get("/conversations")
 async def get_conversation_analytics(
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get conversation analytics."""
+    await deps.apply_rate_limit(request, "analytics_conversations", 120, 60, current_user)
     return {
         "total_conversations": 0,
         "avg_messages_per_conversation": 0,
@@ -87,10 +93,12 @@ async def get_conversation_analytics(
 
 @router.get("/models")
 async def get_model_usage(
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get model usage and cost breakdown."""
+    await deps.apply_rate_limit(request, "analytics_models", 120, 60, current_user)
     result = await db.execute(
         select(
             ObservabilityLog.model_selected,
@@ -111,10 +119,12 @@ async def get_model_usage(
 
 @router.get("/tools")
 async def get_tool_usage(
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get tool usage statistics."""
+    await deps.apply_rate_limit(request, "analytics_tools", 120, 60, current_user)
     result = await db.execute(
         select(
             ObservabilityLog.tool_selected,
@@ -134,10 +144,12 @@ async def get_tool_usage(
 
 @router.get("/knowledge")
 async def get_knowledge_stats(
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get knowledge base statistics."""
+    await deps.apply_rate_limit(request, "analytics_knowledge", 120, 60, current_user)
     return {
         "total_sources": 0,
         "total_chunks": 0,
@@ -148,10 +160,12 @@ async def get_knowledge_stats(
 async def get_observability_logs(
     skip: int = 0,
     limit: int = 50,
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get AI decision observability logs."""
+    await deps.apply_rate_limit(request, "analytics_observability_logs", 120, 60, current_user)
     result = await db.execute(
         select(ObservabilityLog)
         .order_by(ObservabilityLog.created_at.desc())
@@ -163,10 +177,12 @@ async def get_observability_logs(
 @router.get("/observability/{log_id}")
 async def get_observability_detail(
     log_id: str,
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get specific observability log detail."""
+    await deps.apply_rate_limit(request, "analytics_observability_detail", 120, 60, current_user)
     result = await db.execute(
         select(ObservabilityLog).where(ObservabilityLog.id == log_id)
     )
@@ -176,10 +192,12 @@ async def get_observability_detail(
 async def get_session_analytics(
     skip: int = 0,
     limit: int = 50,
+    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get user session analytics."""
+    await deps.apply_rate_limit(request, "analytics_sessions", 120, 60, current_user)
     result = await db.execute(
         select(UserSession)
         .order_by(UserSession.started_at.desc())
@@ -191,8 +209,10 @@ async def get_session_analytics(
 @router.post("/export")
 async def export_analytics(
     format: str = Query("csv"),  # csv or json
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Export analytics as CSV or JSON."""
+    await deps.apply_rate_limit(request, "analytics_export", 120, 60, current_user)
     return {"exported": True, "format": format}

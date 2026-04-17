@@ -1,5 +1,5 @@
 """Admin control panel API routes."""
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -14,10 +14,12 @@ router = APIRouter()
 
 @router.get("/dashboard")
 async def get_dashboard(
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get admin dashboard overview."""
+    await deps.apply_rate_limit(request, "admin_dashboard", 120, 60, current_user)
     # Stats - properly wrapped count queries with select()
     conv_result = await db.execute(select(func.count(Conversation.id)))
     total_convs = conv_result.scalar() or 0
@@ -37,20 +39,24 @@ async def get_dashboard(
 
 @router.get("/ai-config", response_model=list[AIConfigResponse])
 async def list_ai_configs(
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """List AI configurations."""
+    await deps.apply_rate_limit(request, "admin_ai_config_list", 120, 60, current_user)
     result = await db.execute(select(AIConfig))
     return result.scalars().all()
 
 @router.post("/ai-config", response_model=AIConfigResponse)
 async def create_ai_config(
     data: AIConfigCreate,
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Create AI configuration."""
+    await deps.apply_rate_limit(request, "admin_ai_config_create", 120, 60, current_user)
     import uuid
     config = AIConfig(
         id=str(uuid.uuid4()),
@@ -71,10 +77,12 @@ async def create_ai_config(
 async def update_ai_config(
     config_id: str,
     data: AIConfigUpdate,
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Update AI configuration."""
+    await deps.apply_rate_limit(request, "admin_ai_config_update", 120, 60, current_user)
     result = await db.execute(select(AIConfig).where(AIConfig.id == config_id))
     config = result.scalar_one_or_none()
     if not config:
@@ -92,10 +100,12 @@ async def update_ai_config(
 @router.delete("/ai-config/{config_id}")
 async def delete_ai_config(
     config_id: str,
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete AI configuration."""
+    await deps.apply_rate_limit(request, "admin_ai_config_delete", 120, 60, current_user)
     result = await db.execute(select(AIConfig).where(AIConfig.id == config_id))
     config = result.scalar_one_or_none()
     if not config:
@@ -111,10 +121,12 @@ async def delete_ai_config(
 @router.put("/ai-config/{config_id}/set-default")
 async def set_default_config(
     config_id: str,
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Set as default AI configuration."""
+    await deps.apply_rate_limit(request, "admin_ai_config_set_default", 120, 60, current_user)
     # Unset all others
     await db.execute(AIConfig.__table__.update().values(is_default=False))
 
@@ -135,10 +147,12 @@ async def set_default_config(
 async def list_users(
     skip: int = 0,
     limit: int = 50,
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """List users."""
+    await deps.apply_rate_limit(request, "admin_users_list", 120, 60, current_user)
     result = await db.execute(
         select(User).offset(skip).limit(limit)
     )
@@ -146,9 +160,11 @@ async def list_users(
 
 @router.get("/system/health")
 async def system_health(
+    request: Request,
     current_user = Depends(deps.get_current_admin)
 ):
     """Get system health status."""
+    await deps.apply_rate_limit(request, "admin_system_health", 120, 60, current_user)
     return {
         "database": "healthy",
         "redis": "healthy",
@@ -158,8 +174,10 @@ async def system_health(
 
 @router.post("/system/clear-cache")
 async def clear_cache(
+    request: Request,
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Clear all caches."""
+    await deps.apply_rate_limit(request, "admin_system_clear_cache", 120, 60, current_user)
     return {"cleared": True}

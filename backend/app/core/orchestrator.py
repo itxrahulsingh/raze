@@ -389,13 +389,33 @@ When executing tools, be clear about what you're doing and why."""
                     for tool in available_tools
                 ]
 
-            async for chunk in self.llm_router.generate(
+            # Build routing decision then convert to model_config dict
+            decision = self.llm_router.route(
+                task_type="chat",
+                context_tokens=sum(len(m.get("content", "")) // 4 for m in messages),
+                budget_mode=ai_config.routing_strategy or "balanced",
+                preferred_provider=ai_config.provider,
+                preferred_model=ai_config.model_name,
+            )
+            model_config = {
+                "provider": decision.provider,
+                "model": decision.model,
+                "temperature": float(ai_config.temperature or 0.7),
+                "max_tokens": int(ai_config.max_tokens or 2048),
+                "top_p": 1.0,
+                "fallback_provider": decision.fallback_provider,
+                "fallback_model": decision.fallback_model,
+            }
+
+            collected = []
+            async for text_chunk in self.llm_router.generate(
                 messages,
-                ai_config,
+                model_config,
+                stream=stream,
                 tools=tools_defs,
-                stream=stream
             ):
-                yield chunk
+                collected.append(text_chunk)
+                yield {"type": "text", "content": text_chunk}
 
         except Exception as e:
             logger.error(f"Error generating response: {e}")

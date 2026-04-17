@@ -81,48 +81,192 @@ def _compute_hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-async def _save_to_minio(file_bytes: bytes, object_name: str, content_type: str) -> str:
+async def _store_file(file_bytes: bytes, object_name: str, content_type: str) -> str:
     """
-    Upload file bytes to MinIO and return the storage path.
-    Falls back gracefully if MinIO is unavailable (logs warning).
+    Save file bytes using the configured storage backend.
+
+    Returns the storage path string (used later for retrieval during processing).
     """
     settings = get_settings()
+
+    if settings.storage_backend == "local":
+        import os
+        base = settings.local_storage_path
+        full_path = os.path.join(base, object_name)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        await asyncio.to_thread(_write_file_sync, full_path, file_bytes)
+        return f"local:{full_path}"
+
+    # Default: MinIO / S3
     try:
         from minio import Minio  # type: ignore[import]
-        from minio.error import S3Error  # type: ignore[import]
 
-        client = Minio(
-            settings.minio_endpoint,
-            access_key=settings.minio_access_key,
-            secret_key=settings.minio_secret_key,
-            secure=settings.minio_secure,
-        )
-        bucket = settings.minio_bucket_documents
-        if not client.bucket_exists(bucket):
-            client.make_bucket(bucket)
+        def _upload() -> str:
+            client = Minio(
+                settings.minio_endpoint,
+                access_key=settings.minio_access_key,
+                secret_key=settings.minio_secret_key,
+                secure=settings.minio_secure,
+            )
+            bucket = settings.minio_bucket_documents
+            if not client.bucket_exists(bucket):
+                client.make_bucket(bucket)
+            client.put_object(
+                bucket,
+                object_name,
+                io.BytesIO(file_bytes),
+                length=len(file_bytes),
+                content_type=content_type,
+            )
+            return f"minio:{bucket}/{object_name}"
 
-        client.put_object(
-            bucket,
-            object_name,
-            io.BytesIO(file_bytes),
-            length=len(file_bytes),
-            content_type=content_type,
-        )
-        return f"{bucket}/{object_name}"
+        return await asyncio.to_thread(_upload)
     except Exception as exc:
-        logger.warning("knowledge.minio_upload_failed", error=str(exc), object=object_name)
-        return f"local/{object_name}"
+        logger.warning("knowledge.minio_upload_failed_falling_back_to_local", error=str(exc))
+        import os
+        base = settings.local_storage_path
+        full_path = os.path.join(base, object_name)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        await asyncio.to_thread(_write_file_sync, full_path, file_bytes)
+        return f"local:{full_path}"
+
+
+def _write_file_sync(path: str, data: bytes) -> None:
+    with open(path, "wb") as f:
+        f.write(data)
+
+
+async def _read_stored_file(file_path: str) -> bytes:
+    """Read file bytes back from MinIO or local storage."""
+    settings = get_settings()
+
+    if file_path.startswith("local:"):
+        actual_path = file_path[len("local:"):]
+        return await asyncio.to_thread(_read_file_sync, actual_path)
+
+    if file_path.startswith("minio:"):
+        path_part = file_path[len("minio:"):]
+        bucket, *rest = path_part.split("/", 1)
+        object_name = rest[0] if rest else path_part
+
+        def _download() -> bytes:
+            from minio import Minio  # type: ignore[import]
+            client = Minio(
+                settings.minio_endpoint,
+                access_key=settings.minio_access_key,
+                secret_key=settings.minio_secret_key,
+                secure=settings.minio_secure,
+            )
+            response = client.get_object(bucket, object_name)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+
+        return await asyncio.to_thread(_download)
+
+    # Legacy paths without prefix
+    if "/" in file_path and not file_path.startswith("/"):
+        # Old minio format: "bucket/object"
+        bucket, *rest = file_path.split("/", 1)
+        object_name = rest[0] if rest else file_path
+
+        def _download_legacy() -> bytes:
+            from minio import Minio  # type: ignore[import]
+            client = Minio(
+                settings.minio_endpoint,
+                access_key=settings.minio_access_key,
+                secret_key=settings.minio_secret_key,
+                secure=settings.minio_secure,
+            )
+            response = client.get_object(bucket, object_name)
+            data = response.read()
+            response.close()
+            response.release_conn()
+            return data
+
+        return await asyncio.to_thread(_download_legacy)
+
+    return await asyncio.to_thread(_read_file_sync, file_path)
+
+
+def _read_file_sync(path: str) -> bytes:
+    with open(path, "rb") as f:
+        return f.read()
+
+
+async def _process_knowledge_source_bg(source_id: uuid.UUID) -> None:
+    """
+    Background task: ingest a knowledge source into the vector store.
+
+    Creates a fresh DB session (cannot reuse request session after response).
+    """
+    from app.database import AsyncSessionLocal
+    from app.core.knowledge_engine import KnowledgeEngine
+    from app.core.llm_router import LLMRouter
+    from app.core.vector_search import VectorSearchEngine
+
+    logger.info("knowledge.bg_processing_start", source_id=str(source_id))
+
+    async with AsyncSessionLocal() as db:
+        try:
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+            )
+            source = result.scalar_one_or_none()
+            if not source:
+                logger.error("knowledge.bg_source_not_found", source_id=str(source_id))
+                return
+
+            llm = LLMRouter()
+            vs = VectorSearchEngine()
+            engine = KnowledgeEngine(db, llm, vs)
+
+            if source.url:
+                await engine.ingest_url(source.url, source_id)
+            elif source.file_path:
+                file_bytes = await _read_stored_file(source.file_path)
+                # Determine extension from mime_type or file_path
+                ext = "txt"
+                if source.mime_type:
+                    mt = source.mime_type
+                    if "pdf" in mt:
+                        ext = "pdf"
+                    elif "word" in mt or "docx" in mt:
+                        ext = "docx"
+                    elif "html" in mt:
+                        ext = "html"
+                    elif "csv" in mt:
+                        ext = "csv"
+                    elif "json" in mt:
+                        ext = "json"
+                # Write to temp file for KnowledgeEngine
+                import tempfile, os
+                suffix = f".{ext}"
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(file_bytes)
+                    tmp_path = tmp.name
+                try:
+                    await engine.ingest_file(tmp_path, source_id)
+                finally:
+                    os.unlink(tmp_path)
+            else:
+                logger.error("knowledge.bg_no_source_data", source_id=str(source_id))
+
+            logger.info("knowledge.bg_processing_complete", source_id=str(source_id))
+        except Exception as exc:
+            logger.error("knowledge.bg_processing_error", source_id=str(source_id), error=str(exc))
+            await db.execute(
+                update(KnowledgeSource)
+                .where(KnowledgeSource.id == source_id)
+                .values(status=KnowledgeSourceStatus.failed.value, processing_error=str(exc)[:2000])
+            )
+            await db.commit()
 
 
 async def _trigger_processing(source_id: uuid.UUID) -> None:
-    """Send the source ID to the Celery ingestion task."""
-    try:
-        from app.tasks.knowledge import ingest_knowledge_source  # type: ignore[import]
-
-        ingest_knowledge_source.delay(str(source_id))
-        logger.info("knowledge.processing_queued", source_id=str(source_id))
-    except Exception as exc:
-        logger.error("knowledge.processing_dispatch_failed", error=str(exc), source_id=str(source_id))
+    """Dispatch processing to background (fire-and-forget)."""
+    asyncio.create_task(_process_knowledge_source_bg(source_id))
 
 
 # ─── POST /knowledge/sources ─────────────────────────────────────────────────
@@ -508,8 +652,12 @@ async def search_knowledge(
 
     try:
         from app.core.knowledge_engine import KnowledgeEngine  # type: ignore[import]
+        from app.core.llm_router import LLMRouter
+        from app.core.vector_search import VectorSearchEngine
 
-        engine = KnowledgeEngine()
+        llm = LLMRouter()
+        vs = VectorSearchEngine()
+        engine = KnowledgeEngine(db, llm, vs)
         raw_results = await engine.search(
             query=body.query,
             mode=body.mode,

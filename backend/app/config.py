@@ -117,6 +117,17 @@ class Settings(BaseSettings):
     qdrant_collection_memory: str = "raze_memory"
     qdrant_vector_size: int = 3072
 
+    # ── Storage Backend ───────────────────────────────────────────────────────
+    # "minio" stores files in MinIO/S3; "local" stores on the container filesystem.
+    storage_backend: str = Field(
+        default="minio",
+        description="File storage backend: 'minio' or 'local'",
+    )
+    local_storage_path: str = Field(
+        default="/app/storage",
+        description="Absolute path for local file storage (used when storage_backend=local)",
+    )
+
     # ── MinIO / S3 ───────────────────────────────────────────────────────────
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"

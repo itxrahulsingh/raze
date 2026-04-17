@@ -58,6 +58,7 @@ from app.schemas.chat import (
     StreamEventType,
 )
 from app.core.security import get_current_user, verify_api_key
+from app.api.v1.deps import apply_rate_limit
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -229,6 +230,7 @@ async def send_message(
     Process a user message and return the full AI response.
     Session tracking and conversation state management are handled automatically.
     """
+    await apply_rate_limit(request, "chat_message", 30, 60, current_user)
     settings = get_settings()
     session_id = body.session_id or str(uuid.uuid4())
     user_id = current_user.id if current_user else None
@@ -250,11 +252,12 @@ async def send_message(
 
     start_ts = time.monotonic()
 
-    # --- AI Engine call (stubbed; real implementation wires to app.core.chat_engine) ---
+    # --- AI Engine call ---
     try:
-        from app.core.chat_engine import ChatEngine  # type: ignore[import]
+        from app.core.chat_engine import ChatEngine
 
-        engine = ChatEngine()
+        redis_client = get_redis()
+        engine = ChatEngine(db=db, redis=redis_client)
         result = await engine.process(
             message=body.message,
             conversation_id=conv.id,
@@ -279,14 +282,14 @@ async def send_message(
         memory_items_used = result.get("memory_items_used", 0)
         tool_calls = result.get("tool_calls")
         tool_results = result.get("tool_results")
-    except ImportError:
-        # Fallback when engine not yet wired – return echo for integration testing
-        ai_content = f"[Echo] {body.message}"
+    except Exception as exc:
+        logger.error("chat.process_error", error=str(exc))
+        ai_content = "I encountered an error processing your request. Please try again."
         model_used = settings.openai_default_model
         provider_used = "openai"
-        tokens_used = len(body.message.split())
-        prompt_tokens = tokens_used
-        completion_tokens = 10
+        tokens_used = 0
+        prompt_tokens = 0
+        completion_tokens = 0
         cost_usd = 0.0
         knowledge_chunks_used = 0
         memory_items_used = 0
@@ -362,6 +365,7 @@ async def stream_message(
         data: {"event": "delta", "text": "Hello"}\n\n
         data: {"event": "done", "message_id": "...", "tokens_used": 42}\n\n
     """
+    await apply_rate_limit(request, "chat_stream", 10, 60, current_user)
     settings = get_settings()
     session_id = body.session_id or str(uuid.uuid4())
     user_id = current_user.id if current_user else None
@@ -401,9 +405,10 @@ async def stream_message(
         completion_tokens = 0
 
         try:
-            from app.core.chat_engine import ChatEngine  # type: ignore[import]
+            from app.core.chat_engine import ChatEngine
 
-            engine = ChatEngine()
+            _redis = get_redis()
+            engine = ChatEngine(db=db, redis=_redis)
             async for delta in engine.stream(
                 message=body.message,
                 conversation_id=conv_id,
@@ -429,24 +434,19 @@ async def stream_message(
                     provider_used = delta.get("provider_used", provider_used)
                     prompt_tokens = delta.get("prompt_tokens", 0)
                     completion_tokens = delta.get("completion_tokens", 0)
-        except ImportError:
-            # Fallback streaming simulation
-            words = f"[Echo] {body.message}".split()
-            for word in words:
-                chunk = word + " "
-                collected_text.append(chunk)
-                yield _sse_line(StreamChunk(event=StreamEventType.delta, text=chunk))
-                await asyncio.sleep(0.02)
-            tokens_used = len(words)
-            prompt_tokens = len(body.message.split())
-            completion_tokens = len(words)
+        except Exception as exc:
+            logger.error("chat.stream_error", error=str(exc))
+            error_msg = "An error occurred while generating the response."
+            collected_text.append(error_msg)
+            yield _sse_line(StreamChunk(event=StreamEventType.delta, text=error_msg))
 
         latency_ms = int((time.monotonic() - start_ts) * 1000)
         full_content = "".join(collected_text)
 
-        # Persist AI message in background
+        # Persist AI message in background using a fresh session
         async def _persist_async() -> None:
-            async with AsyncSession(bind=db.get_bind()) as session:
+            from app.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
                 try:
                     ai_msg = Message(
                         id=msg_id,
@@ -462,9 +462,6 @@ async def stream_message(
                         cost_usd=cost_usd,
                     )
                     session.add(ai_msg)
-                    await session.execute(
-                        select(Conversation).where(Conversation.id == conv_id)
-                    )
                     await session.commit()
                 except Exception as exc:
                     logger.error("chat.stream_persist_error", error=str(exc))
@@ -505,6 +502,7 @@ async def list_conversations(
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100),
     status_filter: str | None = Query(default=None, alias="status"),
+    request: Request,
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> ConversationListResponse:
@@ -512,6 +510,7 @@ async def list_conversations(
     Return a paginated list of conversations.  Authenticated users see their own
     conversations; anonymous callers receive an empty list.
     """
+    await apply_rate_limit(request, "chat_conversations_list", 30, 60, current_user)
     if current_user is None:
         return ConversationListResponse(items=[], total=0, page=page, page_size=page_size)
 
@@ -545,10 +544,12 @@ async def list_conversations(
 )
 async def get_conversation(
     conversation_id: uuid.UUID,
+    request: Request,
     current_user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db),
 ) -> Conversation:
     """Return conversation metadata.  Ownership is enforced for authenticated users."""
+    await apply_rate_limit(request, "chat_conversations_get", 30, 60, current_user)
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
