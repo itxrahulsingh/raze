@@ -120,20 +120,29 @@ curl http://<SERVER_IP>/health
 The database starts empty. Create a superadmin via psql:
 
 ```bash
-docker compose exec postgres psql -U raze -d raze -c "
-INSERT INTO users (id, email, username, hashed_password, full_name, role, is_active, is_verified)
-VALUES (
-  gen_random_uuid(),
+docker compose exec -T postgres psql -U raze -d raze <<'SQL'
+INSERT INTO public."user" (
+  id, email, username, hashed_password, role, is_active, metadata
+) VALUES (
+  gen_random_uuid()::text,
   'admin@yourcompany.com',
   'admin',
   -- bcrypt hash of 'ChangeMe123!' — replace immediately after first login
-  '\$2b\$12\$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCi1O7EUmg7BM.s9nOGIEU.',
-  'System Administrator',
+  '$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQyCi1O7EUmg7BM.s9nOGIEU.',
   'superadmin',
   true,
-  true
-);
-"
+  '{}'::jsonb
+)
+ON CONFLICT (email) DO UPDATE SET
+  username = EXCLUDED.username,
+  hashed_password = EXCLUDED.hashed_password,
+  role = EXCLUDED.role,
+  is_active = EXCLUDED.is_active,
+  metadata = EXCLUDED.metadata;
+SQL
+
+# Verify
+docker compose exec -T postgres psql -U raze -d raze -c 'SELECT email, username, role, is_active FROM public."user";'
 ```
 
 Then log in via `POST /api/v1/auth/login` and immediately change your password via `POST /api/v1/auth/change-password`.

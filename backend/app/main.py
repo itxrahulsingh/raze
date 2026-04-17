@@ -96,14 +96,14 @@ async def detailed_health_check():
 
 
 # Include routers
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
-app.include_router(chat.router, prefix="/api/v1/chat", tags=["chat"])
-app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["knowledge"])
+app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
+app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+app.include_router(knowledge.router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
-app.include_router(sdk.router, tags=["sdk"])
+app.include_router(sdk.router, prefix="/api/v1", tags=["sdk"])
 
 
 # Metrics endpoint
