@@ -375,7 +375,6 @@ async def get_session_info(
         "active": ttl > 0,
     }
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
 
 @router.get("/config")
 async def get_public_config(

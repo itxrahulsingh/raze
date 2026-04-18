@@ -53,6 +53,36 @@ async def lifespan(app: FastAPI):
     await vs.create_collection(settings.qdrant_collection_memory, vector_size=settings.qdrant_vector_size)
     logger.info("Qdrant collections initialized")
 
+    # Validate Ollama connectivity if enabled
+    if settings.ollama_enabled:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                resp.raise_for_status()
+                logger.info("Ollama service validated and healthy")
+        except Exception as e:
+            logger.error("Ollama validation failed", error=str(e), base_url=settings.ollama_base_url)
+            raise RuntimeError(f"Ollama service at {settings.ollama_base_url} is not responding. Check OLLAMA_BASE_URL and ensure Ollama container is running.")
+
+    # Validate at least one LLM provider is configured
+    providers_available = []
+    if settings.ollama_enabled:
+        providers_available.append("ollama")
+    if settings.openai_api_key:
+        providers_available.append("openai")
+    if settings.anthropic_api_key:
+        providers_available.append("anthropic")
+    if settings.google_api_key:
+        providers_available.append("gemini")
+    if settings.grok_api_key:
+        providers_available.append("grok")
+
+    if not providers_available:
+        raise RuntimeError("No LLM providers configured. Enable Ollama or set API keys for OpenAI/Anthropic/Gemini/Grok.")
+
+    logger.info("LLM providers available", providers=providers_available)
+
     logger.info("RAZE AI OS started successfully")
 
     yield
@@ -96,14 +126,31 @@ async def health_check():
 @app.get("/api/v1/health")
 async def detailed_health_check():
     """Detailed health check."""
+    import httpx
+
+    components = {
+        "database": "healthy",
+        "redis": "healthy",
+        "vector_search": "healthy"
+    }
+
+    # Check Ollama if enabled
+    if settings.ollama_enabled:
+        try:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                resp.raise_for_status()
+                components["ollama"] = "healthy"
+        except Exception as e:
+            logger.warning("Ollama health check failed", error=str(e))
+            components["ollama"] = f"unhealthy: {str(e)}"
+
+    overall_status = "healthy" if all(v == "healthy" for v in components.values()) else "degraded"
+
     return {
-        "status": "healthy",
+        "status": overall_status,
         "version": "1.0.0",
-        "components": {
-            "database": "healthy",
-            "redis": "healthy",
-            "vector_search": "healthy"
-        }
+        "components": components
     }
 
 

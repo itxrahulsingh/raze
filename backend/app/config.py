@@ -108,9 +108,9 @@ class Settings(BaseSettings):
     grok_default_model: str = "grok-3"
 
     # ── Ollama ────────────────────────────────────────────────────────────────
-    ollama_base_url: str = "http://localhost:11434"
-    ollama_default_model: str = "llama3.2"
-    ollama_enabled: bool = False
+    ollama_base_url: str = "http://ollama:11434"
+    ollama_default_model: str = "mistral"
+    ollama_enabled: bool = True
 
     # ── Qdrant ───────────────────────────────────────────────────────────────
     qdrant_url: str = "http://localhost:6333"
