@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import Link from 'next/link'
 
 interface KnowledgeSource {
   id: string
@@ -50,7 +51,8 @@ export default function KnowledgePage() {
         headers: { Authorization: `Bearer ${token}` }
       })
       if (res.ok) {
-        setSources(await res.json())
+        const data = await res.json()
+        setSources(Array.isArray(data) ? data : (data.items || []))
       }
     } catch (e) {
       console.error('Failed to fetch sources:', e)
@@ -173,21 +175,29 @@ export default function KnowledgePage() {
     <div className="space-y-6">
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Advanced Knowledge Management</h1>
-        {activeTab === 'article' ? (
-          <button
-            onClick={() => setShowArticleModal(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+        <div className="flex gap-2">
+          <Link
+            href="/knowledge/settings"
+            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
           >
-            + New Article
-          </button>
-        ) : (
-          <button
-            onClick={() => setShowUploadModal(true)}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            + Upload
-          </button>
-        )}
+            ⚙️ Settings
+          </Link>
+          {activeTab === 'article' ? (
+            <button
+              onClick={() => setShowArticleModal(true)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              + New Article
+            </button>
+          ) : (
+            <button
+              onClick={() => setShowUploadModal(true)}
+              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              + Upload
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Tabs */}
