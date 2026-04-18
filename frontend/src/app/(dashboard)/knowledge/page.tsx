@@ -64,12 +64,12 @@ export default function KnowledgePage() {
   }, [activeTab, isAuthenticated, token])
 
   const fetchSources = async () => {
-    if (!token) return
+    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
     setLoading(true)
     setError(null)
     try {
       const res = await fetch(`/api/v1/knowledge/sources?category=${activeTab}`, {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
       if (res.ok) {
         const data = await res.json()
@@ -86,10 +86,10 @@ export default function KnowledgePage() {
   }
 
   const fetchConversations = async () => {
-    if (!token) return
+    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
     try {
       const res = await fetch('/api/v1/chat/conversations?page=1&page_size=100', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
       if (res.ok) {
         const data = await res.json()
@@ -102,17 +102,19 @@ export default function KnowledgePage() {
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
-    if (!file || !token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!file || !authToken) return
 
     setUploading(true)
     const formData = new FormData()
     formData.append('file', file)
+    formData.append('name', file.name)
     formData.append('category', activeTab)
 
     try {
       const res = await fetch('/api/v1/knowledge/sources', {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${authToken}` },
         body: formData
       })
       if (res.ok) {
@@ -129,12 +131,12 @@ export default function KnowledgePage() {
   }
 
   const handleArticleCreate = async () => {
-    if (!token) return
+    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
     try {
       const res = await fetch('/api/v1/knowledge/articles', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
@@ -159,14 +161,15 @@ export default function KnowledgePage() {
   }
 
   const handleConvertConversation = async () => {
-    if (!token || !selectedConvId) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken || !selectedConvId) return
 
     setConverting(true)
     setError(null)
     try {
       const res = await fetch(`/api/v1/knowledge/sources/from-conversation/${selectedConvId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
       if (res.ok) {
         setShowConversionModal(false)
@@ -185,7 +188,7 @@ export default function KnowledgePage() {
   }
 
   const handleToggleUsage = async (sourceId: string, field: 'can_use_in_knowledge' | 'can_use_in_chat' | 'can_use_in_search') => {
-    if (!token) return
+    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
     try {
       const source = sources.find(s => s.id === sourceId)
       if (!source) return
@@ -194,7 +197,7 @@ export default function KnowledgePage() {
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ [field]: newValue })
@@ -208,12 +211,15 @@ export default function KnowledgePage() {
   }
 
   const handleDelete = async (sourceId: string) => {
-    if (!confirm('Are you sure you want to delete this knowledge source?') || !token) return
+    if (!confirm('Are you sure you want to delete this knowledge source?')) return
+
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     try {
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
       if (res.ok) {
         fetchSources()
@@ -224,11 +230,11 @@ export default function KnowledgePage() {
   }
 
   const handleApprove = async (sourceId: string) => {
-    if (!token) return
+    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
     try {
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}/approve`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${authToken}` }
       })
       if (res.ok) fetchSources()
     } catch (e) {

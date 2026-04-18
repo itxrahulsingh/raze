@@ -51,7 +51,8 @@ export default function AdminChatPage() {
   }, [isAuthenticated, token])
 
   const fetchConversations = async () => {
-    if (!token) {
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) {
       setError('Not authenticated. Please log in.')
       return
     }
@@ -59,7 +60,7 @@ export default function AdminChatPage() {
     setLoadingConvos(true)
     try {
       const res = await fetch('/api/v1/chat/conversations?page=1&page_size=50', {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
       if (res.ok) {
         const data = await res.json()
@@ -81,11 +82,12 @@ export default function AdminChatPage() {
   }
 
   const loadMessages = async (convId: string) => {
-    if (!token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
       if (res.ok) {
         const data = await res.json()
@@ -112,7 +114,8 @@ export default function AdminChatPage() {
   }
 
   const handleSendMessage = async () => {
-    if (!input.trim() || loading || !token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!input.trim() || loading || !authToken) return
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -143,7 +146,7 @@ export default function AdminChatPage() {
       const res = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          'Authorization': `Bearer ${authToken}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

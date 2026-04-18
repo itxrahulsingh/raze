@@ -52,12 +52,13 @@ export default function ConversationsPage() {
   }, [page, isAuthenticated, token])
 
   const fetchConversations = async (pageNum: number) => {
-    if (!token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     setLoading(true)
     try {
       const res = await fetch(`/api/v1/chat/conversations?page=${pageNum}&page_size=${itemsPerPage}`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
 
       if (res.ok) {
@@ -77,13 +78,14 @@ export default function ConversationsPage() {
   }
 
   const loadConversationMessages = async (convId: string) => {
-    if (!token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     setLoadingMessages(true)
     setSelectedConvId(convId)
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
 
       if (res.ok) {
@@ -103,12 +105,14 @@ export default function ConversationsPage() {
 
   const deleteConversation = async (convId: string) => {
     if (!confirm('Delete this conversation?')) return
-    if (!token) return
+
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
 
       if (res.ok) {
@@ -128,13 +132,14 @@ export default function ConversationsPage() {
   }
 
   const handleAddToKnowledge = async (convId: string) => {
-    if (!token) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
 
     setConvertingToKnowledge(convId)
     try {
       const res = await fetch(`/api/v1/knowledge/sources/from-conversation/${convId}`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${authToken}` }
       })
 
       if (res.ok) {
