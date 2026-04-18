@@ -113,25 +113,28 @@ export default function AdminChatPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shadow-sm">
+    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900">
+      {/* Professional Header */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-5 flex justify-between items-center shadow-lg border-b border-blue-500">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Admin Chat</h1>
-          <p className="text-sm text-gray-600 mt-1">Full-featured AI agent chat with knowledge base integration</p>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+            <span className="text-3xl">🤖</span>
+            Admin Chat Agent
+          </h1>
+          <p className="text-sm text-blue-100 mt-1">Enterprise-grade AI assistant with knowledge integration</p>
         </div>
         <div className="flex items-center gap-3">
           {modelInfo.model && (
-            <div className="text-right bg-blue-50 px-3 py-2 rounded-lg">
-              <p className="text-xs text-blue-600">Using</p>
-              <p className="text-sm font-mono font-semibold text-blue-900">
+            <div className="text-right bg-blue-500 bg-opacity-20 backdrop-blur-sm px-4 py-3 rounded-lg border border-blue-400 border-opacity-30">
+              <p className="text-xs text-blue-200">Model</p>
+              <p className="text-sm font-mono font-semibold text-blue-100">
                 {modelInfo.provider}/{modelInfo.model}
               </p>
             </div>
           )}
           <button
             onClick={handleNewChat}
-            className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-900 rounded-lg transition font-medium"
+            className="px-4 py-2 bg-white hover:bg-gray-100 text-blue-700 rounded-lg transition font-medium shadow-md"
           >
             + New Chat
           </button>
@@ -141,30 +144,30 @@ export default function AdminChatPage() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        <div className="flex-1 overflow-y-auto p-6 space-y-5">
           {messages.length === 0 ? (
             <div className="flex items-center justify-center h-full">
-              <div className="text-center max-w-2xl">
-                <div className="text-6xl mb-4">🤖</div>
-                <h2 className="text-3xl font-bold text-gray-900 mb-2">Admin Chat Agent</h2>
-                <p className="text-lg text-gray-600 mb-4">
-                  Enterprise-grade AI chat with knowledge base, memory, and tool integration
+              <div className="text-center max-w-3xl">
+                <div className="text-7xl mb-6 animate-pulse">🚀</div>
+                <h2 className="text-4xl font-bold text-white mb-3">Welcome to Admin Chat</h2>
+                <p className="text-lg text-gray-300 mb-8">
+                  Enterprise-grade AI assistant with advanced reasoning, knowledge integration, and tool capabilities
                 </p>
-                <div className="grid grid-cols-3 gap-4 mt-8">
-                  <div className="bg-white rounded-lg p-4 border border-gray-200">
-                    <p className="text-2xl mb-2">🧠</p>
-                    <p className="text-sm font-semibold text-gray-900">Smart Reasoning</p>
-                    <p className="text-xs text-gray-600">Agent-powered responses</p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
+                  <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-lg p-6 border border-purple-400 border-opacity-30">
+                    <p className="text-2xl mb-3">🧠</p>
+                    <p className="text-sm font-semibold text-white">Smart Reasoning</p>
+                    <p className="text-xs text-purple-100 mt-1">Advanced agent-powered responses</p>
                   </div>
-                  <div className="bg-white rounded-lg p-4 border border-gray-200">
-                    <p className="text-2xl mb-2">📚</p>
-                    <p className="text-sm font-semibold text-gray-900">Knowledge Base</p>
-                    <p className="text-xs text-gray-600">Context-aware answers</p>
+                  <div className="bg-gradient-to-br from-cyan-500 to-cyan-600 rounded-lg p-6 border border-cyan-400 border-opacity-30">
+                    <p className="text-2xl mb-3">📚</p>
+                    <p className="text-sm font-semibold text-white">Knowledge Base</p>
+                    <p className="text-xs text-cyan-100 mt-1">Context-aware answers</p>
                   </div>
-                  <div className="bg-white rounded-lg p-4 border border-gray-200">
-                    <p className="text-2xl mb-2">🔧</p>
-                    <p className="text-sm font-semibold text-gray-900">Tool Use</p>
-                    <p className="text-xs text-gray-600">Extended capabilities</p>
+                  <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-lg p-6 border border-emerald-400 border-opacity-30">
+                    <p className="text-2xl mb-3">🔧</p>
+                    <p className="text-sm font-semibold text-white">Tool Use</p>
+                    <p className="text-xs text-emerald-100 mt-1">Extended capabilities</p>
                   </div>
                 </div>
               </div>
@@ -173,34 +176,34 @@ export default function AdminChatPage() {
             <>
               {messages.map(msg => (
                 <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-3xl ${
+                  <div className={`max-w-2xl ${
                     msg.role === 'user'
-                      ? 'px-4 py-3 bg-blue-600 text-white rounded-lg rounded-br-none'
+                      ? 'px-5 py-3 bg-gradient-to-r from-blue-600 to-blue-700 text-white rounded-2xl rounded-br-none shadow-lg border border-blue-500'
                       : msg.error
-                      ? 'w-full px-4 py-3 bg-red-50 text-red-900 border border-red-200 rounded-lg rounded-bl-none'
+                      ? 'w-full px-5 py-3 bg-red-900 text-red-100 border-l-4 border-red-500 rounded-lg rounded-bl-none shadow-lg'
                       : 'w-full'
                   }`}>
                     {msg.role === 'user' ? (
                       <>
-                        <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
                         <div className="flex gap-3 mt-2 text-xs text-blue-100">
                           <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
                         </div>
                       </>
                     ) : (
-                      <div className="bg-white border border-gray-200 rounded-lg rounded-bl-none space-y-3">
+                      <div className="bg-gradient-to-br from-slate-700 to-slate-800 border border-slate-600 rounded-lg rounded-bl-none space-y-3 shadow-lg">
                         {/* Main response */}
-                        <div className="px-4 pt-3">
-                          <p className="whitespace-pre-wrap text-sm text-gray-900">{msg.content}</p>
+                        <div className="px-5 pt-4">
+                          <p className="whitespace-pre-wrap text-sm text-gray-100 leading-relaxed">{msg.content}</p>
                         </div>
 
                         {/* Tool calls if present */}
                         {msg.tool_calls && msg.tool_calls.length > 0 && (
-                          <div className="px-4 py-2 bg-amber-50 border-t border-gray-200">
-                            <p className="text-xs font-semibold text-amber-900 mb-2">🔧 Agent Actions:</p>
+                          <div className="px-5 py-3 bg-amber-900 bg-opacity-30 border-t border-slate-600">
+                            <p className="text-xs font-semibold text-amber-300 mb-2">🔧 Agent Actions:</p>
                             {msg.tool_calls.map((tool, idx) => (
-                              <div key={idx} className="text-xs text-amber-800 mb-1">
-                                <span className="font-mono bg-amber-100 px-2 py-1 rounded">{tool.name}</span>
+                              <div key={idx} className="text-xs text-amber-200 mb-1">
+                                <span className="font-mono bg-amber-800 bg-opacity-50 px-2 py-1 rounded">{tool.name}</span>
                               </div>
                             ))}
                           </div>
@@ -208,9 +211,9 @@ export default function AdminChatPage() {
 
                         {/* Knowledge base usage */}
                         {(msg.knowledge_chunks_used || msg.memory_items_used) && (
-                          <div className="px-4 py-2 bg-blue-50 border-t border-gray-200">
-                            <p className="text-xs font-semibold text-blue-900 mb-1">📚 Context Sources:</p>
-                            <div className="text-xs text-blue-800 space-y-1">
+                          <div className="px-5 py-3 bg-cyan-900 bg-opacity-30 border-t border-slate-600">
+                            <p className="text-xs font-semibold text-cyan-300 mb-2">📚 Context Sources:</p>
+                            <div className="text-xs text-cyan-200 space-y-1">
                               {msg.knowledge_chunks_used ? (
                                 <p>• Knowledge: {msg.knowledge_chunks_used} chunk{msg.knowledge_chunks_used !== 1 ? 's' : ''}</p>
                               ) : null}
@@ -222,15 +225,15 @@ export default function AdminChatPage() {
                         )}
 
                         {/* Response metrics */}
-                        <div className="px-4 pb-3 pt-2 border-t border-gray-200 flex gap-4 flex-wrap text-xs text-gray-600">
+                        <div className="px-5 pb-4 pt-2 border-t border-slate-600 flex gap-4 flex-wrap text-xs text-gray-400">
                           {msg.timestamp && (
                             <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
                           )}
                           {msg.model_used && (
-                            <span className="font-mono">Model: {msg.model_used}</span>
+                            <span className="font-mono text-gray-300">Model: {msg.model_used}</span>
                           )}
                           {msg.tokens_used && (
-                            <span>Tokens: {msg.tokens_used}</span>
+                            <span>📊 {msg.tokens_used} tokens</span>
                           )}
                           {msg.latency_ms && (
                             <span>⚡ {msg.latency_ms}ms</span>
@@ -243,9 +246,9 @@ export default function AdminChatPage() {
               ))}
               {loading && (
                 <div className="flex justify-start">
-                  <div className="bg-white border border-gray-200 text-gray-900 px-4 py-3 rounded-lg rounded-bl-none">
+                  <div className="bg-gradient-to-r from-slate-700 to-slate-800 text-gray-100 px-5 py-3 rounded-lg rounded-bl-none border border-slate-600 shadow-lg">
                     <div className="flex gap-2 items-center">
-                      <div className="animate-spin">⏳</div>
+                      <div className="animate-spin text-lg">⏳</div>
                       <span className="text-sm">AI is thinking...</span>
                     </div>
                   </div>
@@ -257,10 +260,10 @@ export default function AdminChatPage() {
         </div>
 
         {/* Input Area */}
-        <div className="bg-white border-t border-gray-200 px-6 py-4">
+        <div className="bg-gradient-to-b from-slate-800 to-slate-900 border-t border-slate-700 px-6 py-4 shadow-lg">
           <div className="max-w-4xl mx-auto space-y-3">
-            <div className="flex gap-2">
-              <label className="flex items-center gap-2 text-sm cursor-pointer flex-shrink-0">
+            <div className="flex gap-2 items-center">
+              <label className="flex items-center gap-2 text-sm cursor-pointer flex-shrink-0 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg transition">
                 <input
                   type="checkbox"
                   checked={useKnowledge}
@@ -268,11 +271,11 @@ export default function AdminChatPage() {
                   className="w-4 h-4 rounded"
                   disabled={loading}
                 />
-                <span className="text-gray-700">Use Knowledge Base</span>
+                <span className="text-gray-300">📚 Use Knowledge Base</span>
               </label>
             </div>
 
-            <div className="flex gap-2">
+            <div className="flex gap-3">
               <input
                 type="text"
                 value={input}
@@ -284,20 +287,20 @@ export default function AdminChatPage() {
                   }
                 }}
                 disabled={loading}
-                placeholder="Type your message (Shift+Enter for new line)..."
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg disabled:bg-gray-100 disabled:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Ask me anything... (Shift+Enter for new line)"
+                className="flex-1 px-5 py-3 bg-slate-700 border border-slate-600 text-white placeholder-gray-400 rounded-lg disabled:bg-slate-800 disabled:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 transition"
               />
               <button
                 onClick={handleSendMessage}
                 disabled={loading || !input.trim()}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition disabled:cursor-not-allowed"
+                className="px-6 py-3 bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:from-gray-600 disabled:to-gray-700 text-white rounded-lg font-medium transition shadow-lg border border-blue-500"
               >
                 {loading ? '⏳' : '➤'}
               </button>
             </div>
 
             <p className="text-xs text-gray-500 text-center">
-              Powered by AI agent with knowledge base, memory, and tool integration
+              Powered by advanced AI agent with knowledge base, memory, and tool integration
             </p>
           </div>
         </div>

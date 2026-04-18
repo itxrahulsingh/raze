@@ -39,7 +39,7 @@ export default function DashboardLayout({
   const navItems = [
     { name: 'Dashboard', href: '/dashboard', icon: '📊' },
     { name: 'Knowledge', href: '/knowledge', icon: '📚' },
-    { name: 'Test Chat', href: '/test-chat', icon: '🤖' },
+    { name: 'Admin Chat', href: '/admin-chat', icon: '🤖' },
     { name: 'Conversations', href: '/conversations', icon: '💬' },
     { name: 'Memory', href: '/memory', icon: '🧠' },
     { name: 'Tools', href: '/tools', icon: '🔧' },

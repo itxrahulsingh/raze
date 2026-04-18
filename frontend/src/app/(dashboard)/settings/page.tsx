@@ -64,14 +64,41 @@ export default function SettingsPage() {
 
   const [loading, setLoading] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [loadingModels, setLoadingModels] = useState(false)
 
   useEffect(() => {
     fetchOllamaModels()
+    fetchWhiteLabelSettings()
   }, [])
 
-  const fetchOllamaModels = async () => {
+  const fetchWhiteLabelSettings = async () => {
     try {
       const token = localStorage.getItem('access_token')
+      const res = await fetch('/api/v1/admin/white-label', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        }
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setBrandName(data.brand_name || 'RAZE')
+        setBrandColor(data.brand_color || '#3B82F6')
+        setLogoUrl(data.logo_url || '')
+      }
+    } catch (e) {
+      console.error('Failed to fetch white label settings:', e)
+    }
+  }
+
+  const fetchOllamaModels = async () => {
+    setLoadingModels(true)
+    try {
+      const token = localStorage.getItem('access_token')
+      if (!token) {
+        console.warn('No auth token, skipping Ollama models fetch')
+        setLoadingModels(false)
+        return
+      }
       const res = await fetch('/api/v1/admin/ollama-models', {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -79,19 +106,31 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         const data = await res.json()
-        setAvailableModels(data.models || [])
+        const models = data.models || []
+        setAvailableModels(models)
+        if (provider === 'ollama' && models.length > 0) {
+          setModel(models[0])
+        }
+      } else {
+        console.error('Failed to fetch Ollama models:', res.status)
       }
     } catch (e) {
       console.error('Failed to fetch Ollama models:', e)
+    } finally {
+      setLoadingModels(false)
     }
   }
 
   const handleProviderChange = (newProvider: string) => {
     setProvider(newProvider)
-    const models = PROVIDER_MODELS[newProvider] || []
-    setAvailableModels(models)
-    if (models.length > 0) {
-      setModel(models[0])
+    if (newProvider === 'ollama') {
+      fetchOllamaModels()
+    } else {
+      const models = PROVIDER_MODELS[newProvider] || []
+      setAvailableModels(models)
+      if (models.length > 0) {
+        setModel(models[0])
+      }
     }
   }
 
@@ -175,6 +214,7 @@ export default function SettingsPage() {
       if (res.ok) {
         setSaved(true)
         setTimeout(() => setSaved(false), 3000)
+        await fetchWhiteLabelSettings()
       }
     } catch (e) {
       alert('Error: ' + String(e))
@@ -189,7 +229,7 @@ export default function SettingsPage() {
 
       {saved && (
         <div className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded">
-          Settings saved successfully!
+          ✅ Settings saved successfully!
         </div>
       )}
 
@@ -203,10 +243,10 @@ export default function SettingsPage() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 font-medium border-b-2 ${
+            className={`px-4 py-2 font-medium border-b-2 transition ${
               activeTab === tab.id
                 ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-600'
+                : 'border-transparent text-gray-600 hover:text-gray-900'
             }`}
           >
             {tab.label}
@@ -227,7 +267,7 @@ export default function SettingsPage() {
                 <button
                   key={p}
                   onClick={() => handleProviderChange(p)}
-                  className={`p-3 rounded border-2 font-medium text-center ${
+                  className={`p-3 rounded border-2 font-medium text-center transition ${
                     provider === p
                       ? 'border-blue-600 bg-blue-50 text-blue-600'
                       : 'border-gray-300 hover:border-gray-400'
@@ -242,17 +282,24 @@ export default function SettingsPage() {
           {/* Model Selection */}
           <div>
             <label className="block text-sm font-bold mb-2">Model *</label>
-            <select
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            >
-              {availableModels.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-            {provider === 'ollama' && availableModels.length === 0 && (
-              <p className="text-yellow-600 text-sm mt-2">No Ollama models found. Make sure Ollama is running.</p>
+            {provider === 'ollama' && loadingModels ? (
+              <div className="px-3 py-2 border border-gray-300 rounded-lg text-gray-600">
+                Loading Ollama models...
+              </div>
+            ) : availableModels.length === 0 && provider === 'ollama' ? (
+              <div className="px-3 py-2 border border-orange-300 bg-orange-50 rounded-lg text-orange-700">
+                ⚠️ No Ollama models found. Make sure Ollama is running and has models installed.
+              </div>
+            ) : (
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+              >
+                {availableModels.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+              </select>
             )}
           </div>
 
@@ -333,7 +380,7 @@ export default function SettingsPage() {
           <button
             onClick={handleSaveAIConfig}
             disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
           >
             {loading ? 'Saving...' : 'Save AI Configuration'}
           </button>
@@ -345,98 +392,94 @@ export default function SettingsPage() {
         <div className="bg-white p-6 rounded-lg shadow space-y-6">
           <h2 className="text-xl font-bold">Provider API Configuration</h2>
 
-          {/* OpenAI */}
-          <div className="border-l-4 border-blue-500 p-4 bg-blue-50 rounded">
-            <h3 className="font-bold mb-3">OpenAI</h3>
-            <input
-              type="password"
-              placeholder="API Key (sk-...)"
-              value={providerConfigs.openai?.apiKey || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                openai: {...(providerConfigs.openai || {}), apiKey: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2"
-            />
-            <input
-              type="text"
-              placeholder="Organization ID (optional)"
-              value={providerConfigs.openai?.orgId || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                openai: {...(providerConfigs.openai || {}), orgId: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-          </div>
-
-          {/* Anthropic */}
-          <div className="border-l-4 border-red-500 p-4 bg-red-50 rounded">
-            <h3 className="font-bold mb-3">Anthropic (Claude)</h3>
-            <input
-              type="password"
-              placeholder="API Key"
-              value={providerConfigs.anthropic?.apiKey || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                anthropic: {...(providerConfigs.anthropic || {}), apiKey: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-          </div>
-
-          {/* Gemini */}
-          <div className="border-l-4 border-yellow-500 p-4 bg-yellow-50 rounded">
-            <h3 className="font-bold mb-3">Google Gemini</h3>
-            <input
-              type="password"
-              placeholder="API Key"
-              value={providerConfigs.gemini?.apiKey || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                gemini: {...(providerConfigs.gemini || {}), apiKey: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-          </div>
-
-          {/* Grok */}
-          <div className="border-l-4 border-purple-500 p-4 bg-purple-50 rounded">
-            <h3 className="font-bold mb-3">Grok (xAI)</h3>
-            <input
-              type="password"
-              placeholder="API Key"
-              value={providerConfigs.grok?.apiKey || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                grok: {...(providerConfigs.grok || {}), apiKey: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-          </div>
-
-          {/* Ollama */}
-          <div className="border-l-4 border-green-500 p-4 bg-green-50 rounded">
-            <h3 className="font-bold mb-3">Ollama (Local)</h3>
-            <input
-              type="text"
-              placeholder="Base URL (default: http://localhost:11434)"
-              value={providerConfigs.ollama?.baseUrl || ''}
-              onChange={(e) => setProviderConfigs({
-                ...providerConfigs,
-                ollama: {...(providerConfigs.ollama || {}), baseUrl: e.target.value}
-              })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-            />
-            <p className="text-sm text-gray-600 mt-2">
-              Install Ollama: <a href="https://ollama.ai" target="_blank" className="text-blue-600 underline">ollama.ai</a>
-            </p>
-          </div>
+          {['openai', 'anthropic', 'gemini', 'grok', 'ollama'].map(providerName => {
+            const colors: {[key: string]: string} = {
+              openai: 'blue', anthropic: 'red', gemini: 'yellow', grok: 'purple', ollama: 'green'
+            }
+            const color = colors[providerName] || 'gray'
+            return (
+              <div key={providerName} className={`border-l-4 border-${color}-500 p-4 bg-${color}-50 rounded`}>
+                <h3 className="font-bold mb-3">{providerName.toUpperCase()}</h3>
+                {providerName === 'openai' && (
+                  <>
+                    <input
+                      type="password"
+                      placeholder="API Key (sk-...)"
+                      value={providerConfigs.openai?.apiKey || ''}
+                      onChange={(e) => setProviderConfigs({
+                        ...providerConfigs,
+                        openai: {...(providerConfigs.openai || {}), apiKey: e.target.value}
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Organization ID (optional)"
+                      value={providerConfigs.openai?.orgId || ''}
+                      onChange={(e) => setProviderConfigs({
+                        ...providerConfigs,
+                        openai: {...(providerConfigs.openai || {}), orgId: e.target.value}
+                      })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    />
+                  </>
+                )}
+                {providerName === 'anthropic' && (
+                  <input
+                    type="password"
+                    placeholder="API Key"
+                    value={providerConfigs.anthropic?.apiKey || ''}
+                    onChange={(e) => setProviderConfigs({
+                      ...providerConfigs,
+                      anthropic: {...(providerConfigs.anthropic || {}), apiKey: e.target.value}
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                )}
+                {providerName === 'gemini' && (
+                  <input
+                    type="password"
+                    placeholder="API Key"
+                    value={providerConfigs.gemini?.apiKey || ''}
+                    onChange={(e) => setProviderConfigs({
+                      ...providerConfigs,
+                      gemini: {...(providerConfigs.gemini || {}), apiKey: e.target.value}
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                )}
+                {providerName === 'grok' && (
+                  <input
+                    type="password"
+                    placeholder="API Key"
+                    value={providerConfigs.grok?.apiKey || ''}
+                    onChange={(e) => setProviderConfigs({
+                      ...providerConfigs,
+                      grok: {...(providerConfigs.grok || {}), apiKey: e.target.value}
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                )}
+                {providerName === 'ollama' && (
+                  <input
+                    type="text"
+                    placeholder="Base URL (default: http://localhost:11434)"
+                    value={providerConfigs.ollama?.baseUrl || ''}
+                    onChange={(e) => setProviderConfigs({
+                      ...providerConfigs,
+                      ollama: {...(providerConfigs.ollama || {}), baseUrl: e.target.value}
+                    })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                  />
+                )}
+              </div>
+            )
+          })}
 
           <button
             onClick={handleSaveProviderConfig}
             disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
           >
             {loading ? 'Saving...' : 'Save Provider Configuration'}
           </button>
@@ -449,7 +492,7 @@ export default function SettingsPage() {
           <h2 className="text-xl font-bold">White Label Settings</h2>
 
           <div>
-            <label className="block text-sm font-bold mb-2">Brand Name</label>
+            <label className="block text-sm font-bold mb-2">Brand Name (Currently: {brandName})</label>
             <input
               type="text"
               value={brandName}
@@ -501,7 +544,7 @@ export default function SettingsPage() {
           <button
             onClick={handleSaveWhiteLabel}
             disabled={loading}
-            className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
+            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
           >
             {loading ? 'Saving...' : 'Save White Label Settings'}
           </button>
