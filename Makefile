@@ -12,7 +12,8 @@ DB_SVC       := postgres
 
 .PHONY: help setup up down restart logs logs-backend logs-frontend logs-nginx \
         migrate migrate-down shell-backend shell-db shell-redis \
-        backup restore ps status build pull clean prune
+        backup restore ps status build pull clean prune \
+        test health generate-secrets setup-admin test-chat
 
 # ── Help ──────────────────────────────────────────────────────────────────────
 help:
@@ -140,3 +141,38 @@ clean: ## Remove stopped containers, unused networks, and dangling images
 prune: ## Remove ALL unused Docker resources including volumes (DESTRUCTIVE)
 	@printf "\033[31mWARNING: This will delete all unused Docker volumes. Are you sure? [y/N] \033[0m" && \
 	read ans && [ $${ans:-N} = y ] && docker system prune -af --volumes || printf "Aborted.\n"
+
+# ── Testing & Verification ───────────────────────────────────────────────────────
+test: ## Run comprehensive deployment tests
+	@bash scripts/test-deployment.sh
+
+health: ## Quick health check of all services
+	@echo "Checking services..."
+	@docker compose ps
+	@echo ""
+	@echo "Backend: $$(curl -s http://localhost/health || echo 'DOWN')"
+	@echo "Frontend: $$(curl -s http://localhost/ | grep -q html && echo 'UP' || echo 'DOWN')"
+	@echo "Postgres: $$(docker compose exec -T postgres pg_isready -U raze -d raze 2>/dev/null && echo 'UP' || echo 'DOWN')"
+	@echo "Redis: $$(docker compose exec -T redis redis-cli ping 2>/dev/null && echo 'UP' || echo 'DOWN')"
+
+# ── Configuration ─────────────────────────────────────────────────────────────────
+generate-secrets: ## Generate secure credentials for .env
+	@bash scripts/generate-secrets.sh
+
+setup-admin: ## Create default admin user and initial configurations
+	@bash scripts/setup-admin.sh
+
+# ── Testing Chat ──────────────────────────────────────────────────────────────────
+test-chat: ## Send test message to chat API (requires TOKEN env var)
+	@if [ -z "$$TOKEN" ]; then \
+		printf "\033[31m[error]\033[0m Set TOKEN environment variable\n"; \
+		printf "Usage: TOKEN=<jwt-token> make test-chat\n"; \
+		exit 1; \
+	fi
+	@printf "\033[32m[chat test]\033[0m Sending test message...\n"
+	@curl -X POST http://localhost/api/v1/chat/message \
+		-H "Authorization: Bearer $$TOKEN" \
+		-H "Content-Type: application/json" \
+		-d '{"message":"Hello! Tell me what you can do.","use_knowledge":true,"use_memory":true}' \
+		| jq .
+	@printf "\033[32m[chat test]\033[0m Complete\n"
