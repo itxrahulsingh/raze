@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState, useRef } from 'react'
+import { useSettings } from '@/lib/settings-context'
 
 interface Message {
   id: string
@@ -9,17 +10,19 @@ interface Message {
   model_used?: string
   tokens_used?: number
   latency_ms?: number
+  isStreaming?: boolean
 }
 
 interface Conversation {
   id: string
   session_id: string
-  title: string
+  title: string | null
   message_count: number
   created_at: string
 }
 
 export default function AdminChatPage() {
+  const settings = useSettings()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [currentConversationId, setCurrentConversationId] = useState<string>('')
@@ -37,7 +40,6 @@ export default function AdminChatPage() {
     scrollToBottom()
   }, [messages])
 
-  // Load conversation history
   useEffect(() => {
     fetchConversations()
   }, [])
@@ -45,7 +47,7 @@ export default function AdminChatPage() {
   const fetchConversations = async () => {
     try {
       const token = localStorage.getItem('access_token')
-      const res = await fetch('/api/v1/chat/conversations?limit=50', {
+      const res = await fetch('/api/v1/chat/conversations?page=1&page_size=50', {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (res.ok) {
@@ -67,7 +69,7 @@ export default function AdminChatPage() {
   const loadMessages = async (convId: string) => {
     try {
       const token = localStorage.getItem('access_token')
-      const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?limit=100`, {
+      const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
       if (res.ok) {
@@ -76,7 +78,7 @@ export default function AdminChatPage() {
         setMessages(msgs.map((m: any) => ({
           id: m.id,
           role: m.role === 'user' ? 'user' : 'assistant',
-          content: m.content,
+          content: m.content || '',
           timestamp: m.created_at,
           model_used: m.model_used,
           tokens_used: m.tokens_used,
@@ -107,11 +109,22 @@ export default function AdminChatPage() {
     setInput('')
     setLoading(true)
 
+    // Create streaming message placeholder
+    const assistantMessageId = (Date.now() + 1).toString()
+    const streamingMessage: Message = {
+      id: assistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString(),
+      isStreaming: true,
+    }
+    setMessages(prev => [...prev, streamingMessage])
+
     try {
       const token = localStorage.getItem('access_token')
       const startTime = Date.now()
       
-      const res = await fetch('/api/v1/chat/message', {
+      const res = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -124,43 +137,82 @@ export default function AdminChatPage() {
         })
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        const latency = Date.now() - startTime
-        
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: 'assistant',
-          content: data.content || 'No response',
-          timestamp: new Date().toISOString(),
-          model_used: data.model_used,
-          tokens_used: data.tokens_used,
-          latency_ms: latency,
+      if (!res.ok) {
+        throw new Error(`Stream failed: ${res.status}`)
+      }
+
+      if (!res.body) {
+        throw new Error('No response body')
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let fullContent = ''
+      let tokenCount = 0
+      let latencyMs = 0
+      let modelUsed = 'mistral:latest'
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        const text = decoder.decode(value)
+        const lines = text.split('\n')
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const json = JSON.parse(line.slice(6))
+              
+              if (json.event === 'delta' && json.text) {
+                fullContent += json.text
+                // Update message in real-time
+                setMessages(prev => prev.map(m => 
+                  m.id === assistantMessageId 
+                    ? { ...m, content: fullContent }
+                    : m
+                ))
+              } else if (json.event === 'done') {
+                tokenCount = json.tokens_used || 0
+                latencyMs = json.latency_ms || 0
+                modelUsed = json.model_used || 'mistral:latest'
+              }
+            } catch (e) {
+              // Ignore parse errors for non-JSON lines
+            }
+          }
         }
-        setMessages(prev => [...prev, assistantMessage])
-        
-        // Refresh conversations to show updated list
-        if (!currentConversationId) {
-          await fetchConversations()
-        }
+      }
+
+      // Update final message with metadata
+      setMessages(prev => prev.map(m => 
+        m.id === assistantMessageId 
+          ? { 
+              ...m, 
+              isStreaming: false,
+              tokens_used: tokenCount,
+              latency_ms: latencyMs,
+              model_used: modelUsed,
+            }
+          : m
+      ))
+
+      // Refresh conversations to show updated list
+      if (!currentConversationId) {
+        await fetchConversations()
       } else {
-        const errorData = await res.json().catch(() => ({ detail: 'Failed to get response' }))
-        const errorMessage: Message = {
-          id: (Date.now() + 2).toString(),
-          role: 'assistant',
-          content: `❌ Error: ${errorData.detail}`,
-          timestamp: new Date().toISOString(),
-        }
-        setMessages(prev => [...prev, errorMessage])
+        await loadMessages(currentConversationId)
       }
     } catch (e) {
-      const errorMessage: Message = {
-        id: (Date.now() + 2).toString(),
+      console.error('Failed to send message:', e)
+      setMessages(prev => prev.filter(m => m.id !== assistantMessageId))
+      // Add error message
+      setMessages(prev => [...prev, {
+        id: assistantMessageId,
         role: 'assistant',
-        content: `❌ Connection error: ${String(e)}`,
+        content: `Error: ${e instanceof Error ? e.message : 'Unknown error occurred'}`,
         timestamp: new Date().toISOString(),
-      }
-      setMessages(prev => [...prev, errorMessage])
+      }])
     } finally {
       setLoading(false)
     }
@@ -169,152 +221,132 @@ export default function AdminChatPage() {
   const handleNewChat = () => {
     setCurrentConversationId('')
     setMessages([])
-    setInput('')
-    fetchConversations()
   }
 
   return (
-    <div className="h-screen flex bg-white">
-      {/* Sidebar - Conversation History (ChatGPT Style) */}
-      <div className="w-64 bg-gray-900 text-white flex flex-col border-r border-gray-700 shadow-lg">
-        {/* New Chat Button */}
-        <button
-          onClick={handleNewChat}
-          className="m-4 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition"
-        >
-          + New Chat
-        </button>
-
-        {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto px-2 space-y-2">
-          {loadingConvos ? (
-            <div className="text-gray-400 text-sm p-4">Loading conversations...</div>
-          ) : conversations.length === 0 ? (
-            <div className="text-gray-400 text-sm p-4">No conversations yet</div>
-          ) : (
-            conversations.map(conv => (
-              <button
-                key={conv.id}
-                onClick={() => handleSelectConversation(conv.id)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-sm transition truncate ${
-                  currentConversationId === conv.id
-                    ? 'bg-gray-700 text-white'
-                    : 'text-gray-300 hover:bg-gray-800'
-                }`}
-                title={conv.title}
-              >
-                {conv.title || `Chat ${new Date(conv.created_at).toLocaleDateString()}`}
-              </button>
-            ))
-          )}
+    <div className="h-full flex bg-white rounded-lg shadow overflow-hidden">
+      {/* Sidebar */}
+      <div className="w-80 border-r border-gray-200 flex flex-col bg-gradient-to-b from-slate-50 to-gray-50">
+        {/* Header */}
+        <div className="p-4 border-b border-gray-200">
+          <div className="flex items-center gap-2 mb-4">
+            {settings.logo_url && <img src={settings.logo_url} alt="Logo" className="w-6 h-6" />}
+            <h1 className="text-lg font-bold" style={{ color: settings.brand_color }}>
+              {settings.brand_name}
+            </h1>
+          </div>
+          <button
+            onClick={handleNewChat}
+            className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
+          >
+            + New Chat
+          </button>
         </div>
 
-        {/* Settings Link */}
-        <div className="p-4 border-t border-gray-700">
-          <a href="/settings" className="text-gray-400 hover:text-white text-sm">
-            ⚙️ Settings
-          </a>
+        {/* Conversations List */}
+        <div className="flex-1 overflow-y-auto">
+          {loadingConvos ? (
+            <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
+          ) : conversations.length === 0 ? (
+            <div className="p-4 text-center text-gray-500 text-sm">No conversations yet</div>
+          ) : (
+            <div className="space-y-1 p-2">
+              {conversations.map(conv => (
+                <button
+                  key={conv.id}
+                  onClick={() => handleSelectConversation(conv.id)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
+                    currentConversationId === conv.id
+                      ? 'bg-white shadow text-slate-900 font-medium'
+                      : 'text-gray-700 hover:bg-white/50'
+                  }`}
+                >
+                  <div className="truncate font-medium">{conv.title || 'Untitled'}</div>
+                  <div className="text-xs text-gray-500">
+                    {new Date(conv.created_at).toLocaleDateString()}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="border-b border-gray-200 px-6 py-4 flex justify-between items-center bg-gradient-to-r from-blue-50 to-cyan-50">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Admin Chat</h1>
-            <p className="text-sm text-gray-600">Enterprise AI Assistant</p>
-          </div>
-        </div>
-
-        {/* Messages Area */}
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
-          {messages.length === 0 ? (
-            <div className="flex items-center justify-center h-full">
-              <div className="text-center max-w-2xl">
-                <div className="text-6xl mb-4">💬</div>
-                <h2 className="text-2xl font-bold text-gray-900 mb-2">Start a conversation</h2>
-                <p className="text-gray-600">Ask anything and get instant AI-powered responses</p>
+          {messages.length === 0 && (
+            <div className="flex items-center justify-center h-full text-gray-500">
+              <div className="text-center">
+                <div className="text-5xl mb-4">💬</div>
+                <p className="text-lg font-medium mb-2">Start a conversation</p>
+                <p className="text-sm">Send a message to begin</p>
               </div>
             </div>
-          ) : (
-            <>
-              {messages.map(msg => (
-                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-2xl ${
-                    msg.role === 'user'
-                      ? 'px-4 py-3 bg-blue-600 text-white rounded-lg rounded-br-none shadow'
-                      : 'w-full'
-                  }`}>
-                    {msg.role === 'user' ? (
-                      <p className="text-sm">{msg.content}</p>
-                    ) : (
-                      <div className="bg-white border border-gray-200 rounded-lg rounded-bl-none shadow p-4">
-                        <p className="text-sm text-gray-900 whitespace-pre-wrap">{msg.content}</p>
-                        <div className="flex gap-4 mt-3 text-xs text-gray-500 flex-wrap">
-                          {msg.model_used && <span>Model: {msg.model_used}</span>}
-                          {msg.tokens_used && <span>Tokens: {msg.tokens_used}</span>}
-                          {msg.latency_ms && <span>⚡ {msg.latency_ms}ms</span>}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-              {loading && (
-                <div className="flex justify-start">
-                  <div className="bg-white border border-gray-200 rounded-lg p-4">
-                    <div className="flex gap-2">
-                      <div className="animate-spin">⏳</div>
-                      <span className="text-sm">AI is thinking...</span>
-                    </div>
-                  </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </>
           )}
+          {messages.map(msg => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-2xl px-4 py-3 rounded-lg ${
+                  msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-none'
+                    : 'bg-white text-gray-900 border border-gray-200 rounded-bl-none'
+                }`}
+              >
+                <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
+                {msg.role === 'assistant' && (
+                  <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 text-xs text-gray-600">
+                    <span>🤖 {msg.model_used || 'mistral:latest'}</span>
+                    {msg.tokens_used && <span>📊 {msg.tokens_used} tokens</span>}
+                    {msg.latency_ms && <span>⚡ {msg.latency_ms}ms</span>}
+                    {msg.isStreaming && <span className="animate-pulse">🔄 Streaming...</span>}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
         </div>
 
         {/* Input Area */}
-        <div className="bg-white border-t border-gray-200 px-6 py-4 shadow-lg">
-          <div className="max-w-4xl mx-auto space-y-3">
-            <div className="flex gap-2">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={useKnowledge}
-                  onChange={(e) => setUseKnowledge(e.target.checked)}
-                  className="w-4 h-4 rounded"
-                  disabled={loading}
-                />
-                <span className="text-gray-700">📚 Use Knowledge Base</span>
-              </label>
-            </div>
-
-            <div className="flex gap-3">
+        <div className="border-t border-gray-200 p-4 bg-white">
+          <div className="flex gap-2 mb-3">
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    handleSendMessage()
-                  }
-                }}
-                disabled={loading}
-                placeholder="Ask anything... (Shift+Enter for new line)"
-                className="flex-1 px-4 py-3 border border-gray-300 rounded-lg disabled:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                type="checkbox"
+                checked={useKnowledge}
+                onChange={(e) => setUseKnowledge(e.target.checked)}
+                className="rounded"
               />
-              <button
-                onClick={handleSendMessage}
-                disabled={loading || !input.trim()}
-                className="px-6 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-medium transition"
-              >
-                {loading ? '⏳' : '➤'}
-              </button>
-            </div>
+              <span>Use Knowledge Base</span>
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSendMessage()
+                }
+              }}
+              placeholder="Type your message... (Shift+Enter for newline)"
+              disabled={loading}
+              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={loading || !input.trim()}
+              className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              {loading ? '⏳' : '→'}
+            </button>
           </div>
         </div>
       </div>

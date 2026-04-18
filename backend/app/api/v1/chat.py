@@ -246,8 +246,13 @@ async def send_message(
     # Upsert session analytics
     background_tasks.add_task(_upsert_session, session_id, db, user_id, request)
 
+    # Collect metadata from request
+    metadata = body.chat_metadata or {}
+    metadata.setdefault('ip_address', request.client.host if request.client else None)
+    metadata.setdefault('user_agent', request.headers.get('user-agent', ''))
+
     conv = await _get_or_create_conversation(
-        session_id, db, user_id, body.ai_config_id, body.chat_metadata
+        session_id, db, user_id, body.ai_config_id, metadata
     )
 
     # Persist user message
@@ -257,6 +262,18 @@ async def send_message(
         MessageRole.user.value,
         body.message,
     )
+
+    # Generate title from first message if not set
+    if not conv.title and conv.message_count == 0:
+        # Take first 50 chars or first sentence
+        title = body.message.strip()[:50]
+        if len(body.message) > 50:
+            # Try to cut at sentence boundary
+            period_idx = body.message.find('.', 40)
+            if period_idx > 0:
+                title = body.message[:period_idx + 1]
+        conv.title = title
+        await db.flush()
 
     start_ts = time.monotonic()
 
@@ -380,8 +397,13 @@ async def stream_message(
 
     background_tasks.add_task(_upsert_session, session_id, db, user_id, request)
 
+    # Collect metadata from request
+    metadata = body.chat_metadata or {}
+    metadata.setdefault('ip_address', request.client.host if request.client else None)
+    metadata.setdefault('user_agent', request.headers.get('user-agent', ''))
+
     conv = await _get_or_create_conversation(
-        session_id, db, user_id, body.ai_config_id, body.chat_metadata
+        session_id, db, user_id, body.ai_config_id, metadata
     )
     conv_id = conv.id
 
@@ -389,6 +411,18 @@ async def stream_message(
     user_msg = await _persist_message(
         db, conv_id, MessageRole.user.value, body.message
     )
+
+    # Generate title from first message if not set
+    if not conv.title and conv.message_count == 0:
+        # Take first 50 chars or first sentence
+        title = body.message.strip()[:50]
+        if len(body.message) > 50:
+            # Try to cut at sentence boundary
+            period_idx = body.message.find('.', 40)
+            if period_idx > 0:
+                title = body.message[:period_idx + 1]
+        conv.title = title
+
     await db.commit()
 
     msg_id = uuid.uuid4()
