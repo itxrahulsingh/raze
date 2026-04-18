@@ -45,12 +45,15 @@ async def lifespan(app: FastAPI):
     await connect_db()
     await connect_redis()
 
-    # Initialize Qdrant collections
-    from app.core.vector_search import VectorSearchEngine
-    vs = VectorSearchEngine()
-    await vs.create_collection(settings.qdrant_collection_knowledge, vector_size=settings.qdrant_vector_size)
-    await vs.create_collection(settings.qdrant_collection_memory, vector_size=settings.qdrant_vector_size)
-    logger.info("Qdrant collections initialized")
+    # Initialize Qdrant collections (non-blocking; retries on first request if unavailable)
+    try:
+        from app.core.vector_search import VectorSearchEngine
+        vs = VectorSearchEngine()
+        await vs.create_collection(settings.qdrant_collection_knowledge, vector_size=settings.qdrant_vector_size)
+        await vs.create_collection(settings.qdrant_collection_memory, vector_size=settings.qdrant_vector_size)
+        logger.info("Qdrant collections initialized")
+    except Exception as e:
+        logger.warning("Qdrant initialization warning - will retry on first request", error=str(e)[:100], qdrant_url=settings.qdrant_url)
 
     # Soft-validate Ollama if enabled (retry on first request if unavailable)
     if settings.ollama_enabled:
