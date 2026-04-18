@@ -21,6 +21,7 @@ from app.models.knowledge import (
     KnowledgeSourceStatus,
     KnowledgeSourceType,
 )
+from app.models.knowledge_version import KnowledgeChunkVersion
 from app.models.memory import Memory, MemoryRetentionPolicy, MemoryType
 from app.models.system import AuditLog, SystemConfig
 from app.models.tool import Tool, ToolExecution, ToolExecutionStatus, ToolType
@@ -42,6 +43,7 @@ __all__ = [
     "KnowledgeSourceStatus",
     "KnowledgeSourceMode",
     "KnowledgeChunk",
+    "KnowledgeChunkVersion",
     # Memory
     "Memory",
     "MemoryType",

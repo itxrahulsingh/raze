@@ -33,6 +33,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     Response,
     UploadFile,
     status,
@@ -49,6 +50,7 @@ from app.models.knowledge import (
     KnowledgeSourceStatus,
     KnowledgeSourceType,
 )
+from app.models.knowledge_version import KnowledgeChunkVersion
 from app.models.user import User
 from app.schemas.knowledge import (
     KnowledgeChunkListResponse,
@@ -61,6 +63,7 @@ from app.schemas.knowledge import (
     KnowledgeSourceResponse,
 )
 from app.core.security import get_current_admin, get_current_user
+from app.core.dependencies import check_rate_limit
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
@@ -645,6 +648,7 @@ async def reprocess_source(
 )
 async def search_knowledge(
     body: KnowledgeSearchRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSearchResponse:
@@ -652,6 +656,10 @@ async def search_knowledge(
     Perform semantic (ANN), keyword (full-text), or hybrid search over
     all approved knowledge chunks.
     """
+    # Check rate limit
+    request.state.user_id = str(current_user.id)
+    await check_rate_limit(request, "knowledge_search")
+
     start_ts = time.monotonic()
 
     try:
@@ -838,3 +846,129 @@ async def delete_chunk(
     )
     await db.commit()
     logger.info("knowledge.chunk_deleted", chunk_id=str(chunk_id))
+
+
+# ─── GET /knowledge/chunks/{id}/versions ──────────────────────────────────────
+
+
+@router.get(
+    "/chunks/{chunk_id}/versions",
+    response_model=list,
+    summary="List all versions of a knowledge chunk",
+)
+async def list_chunk_versions(
+    chunk_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list:
+    """List all versions of a knowledge chunk with change metadata."""
+    # Verify chunk exists
+    chunk_result = await db.execute(
+        select(KnowledgeChunk).where(KnowledgeChunk.id == chunk_id)
+    )
+    chunk = chunk_result.scalar_one_or_none()
+    if chunk is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found")
+
+    # Get all versions ordered by version descending
+    versions_result = await db.execute(
+        select(KnowledgeChunkVersion)
+        .where(KnowledgeChunkVersion.chunk_id == chunk_id)
+        .order_by(KnowledgeChunkVersion.version.desc())
+    )
+    versions = versions_result.scalars().all()
+
+    return [
+        {
+            "version": v.version,
+            "old_content": v.old_content,
+            "new_content": v.new_content,
+            "changed_by": str(v.changed_by) if v.changed_by else None,
+            "change_reason": v.change_reason,
+            "created_at": v.created_at.isoformat() if v.created_at else None,
+        }
+        for v in versions
+    ]
+
+
+# ─── POST /knowledge/chunks/{id}/rollback ──────────────────────────────────────
+
+
+@router.post(
+    "/chunks/{chunk_id}/rollback",
+    response_model=dict,
+    summary="Rollback chunk to a previous version",
+)
+async def rollback_chunk_version(
+    chunk_id: uuid.UUID,
+    target_version: int = Query(..., ge=1),
+    reason: str = Query(default=""),
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Rollback a knowledge chunk to a previous version.
+
+    Requires admin role.
+    """
+    # Get current chunk
+    chunk_result = await db.execute(
+        select(KnowledgeChunk).where(KnowledgeChunk.id == chunk_id)
+    )
+    chunk = chunk_result.scalar_one_or_none()
+    if chunk is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chunk not found")
+
+    # Get target version
+    target_result = await db.execute(
+        select(KnowledgeChunkVersion).where(
+            KnowledgeChunkVersion.chunk_id == chunk_id,
+            KnowledgeChunkVersion.version == target_version,
+        )
+    )
+    target = target_result.scalar_one_or_none()
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Version {target_version} not found",
+        )
+
+    # Record current state before rollback
+    current_version_num = await db.execute(
+        select(func.max(KnowledgeChunkVersion.version)).where(
+            KnowledgeChunkVersion.chunk_id == chunk_id
+        )
+    )
+    max_version = current_version_num.scalar() or 0
+    new_version_num = max_version + 1
+
+    # Create new version record for the rollback
+    rollback_version = KnowledgeChunkVersion(
+        chunk_id=chunk_id,
+        version=new_version_num,
+        old_content=chunk.content,
+        new_content=target.new_content,
+        changed_by=current_user.id,
+        change_reason=f"Rollback to version {target_version}. {reason}".strip(),
+    )
+    db.add(rollback_version)
+
+    # Update chunk content
+    chunk.content = target.new_content
+    chunk.updated_at = datetime.now(UTC)
+
+    await db.commit()
+    logger.info(
+        "knowledge.chunk_rolled_back",
+        chunk_id=str(chunk_id),
+        target_version=target_version,
+        new_version=new_version_num,
+        admin_id=str(current_user.id),
+    )
+
+    return {
+        "chunk_id": str(chunk_id),
+        "rolled_back_to_version": target_version,
+        "new_version": new_version_num,
+        "reason": reason,
+    }

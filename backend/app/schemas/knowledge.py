@@ -208,3 +208,25 @@ class KnowledgeSearchResponse(BaseModel):
     results: list[KnowledgeSearchResult]
     total_found: int
     search_latency_ms: int
+
+
+# ─── Versioning ──────────────────────────────────────────────────────────────
+
+
+class KnowledgeChunkVersionResponse(BaseModel):
+    id: uuid.UUID
+    chunk_id: uuid.UUID
+    version: int
+    old_content: str | None
+    new_content: str
+    changed_by: uuid.UUID | None
+    change_reason: str | None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class KnowledgeChunkVersionListResponse(BaseModel):
+    chunk_id: uuid.UUID
+    versions: list[KnowledgeChunkVersionResponse]
+    current_version: int
