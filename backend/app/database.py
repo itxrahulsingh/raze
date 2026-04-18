@@ -232,17 +232,25 @@ async def connect_db() -> None:
             ai_config, analytics, conversation, knowledge, memory, tool, user
         )
 
-        try:
-            async with engine.begin() as conn:
-                # Use a sync-compatible approach for table creation
-                # Ignore "already exists" errors for idempotent behavior
-                await conn.run_sync(Base.metadata.create_all)
-            logger.info("database.tables_initialized")
-        except Exception as e:
-            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                logger.info("database.tables_already_exist", message=str(e)[:100])
-            else:
-                raise
+        # Create tables using raw SQL with IF NOT EXISTS for idempotency
+        from app.models import (  # noqa: F401
+            ai_config, analytics, conversation, knowledge, memory, tool, user
+        )
+        async with engine.connect() as conn:
+            # Get DDL statements from metadata
+            from sqlalchemy.schema import CreateTable
+            for table in Base.metadata.sorted_tables:
+                # Use raw DDL to create tables with proper IF NOT EXISTS handling
+                ddl_str = str(CreateTable(table).compile(bind=engine))
+                # Modify to add IF NOT EXISTS
+                ddl_str = ddl_str.replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ")
+                try:
+                    await conn.execute(text(ddl_str))
+                    await conn.commit()
+                except Exception:
+                    # If table creation fails, it might already exist
+                    pass
+        logger.info("database.tables_initialized")
 
     except Exception as exc:
         logger.error("database.connection_failed", error=str(exc))

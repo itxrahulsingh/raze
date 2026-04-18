@@ -19,20 +19,34 @@ async def get_analytics_overview(
 ):
     """Get analytics overview."""
     await deps.apply_rate_limit(request, "analytics_overview", 120, 60, current_user)
-    today = datetime.utcnow().strftime("%Y-%m-%d")
 
-    result = await db.execute(
+    # Today's requests
+    today_result = await db.execute(
         select(func.count(ObservabilityLog.id)).where(
             ObservabilityLog.created_at >= datetime.utcnow() - timedelta(days=1)
         )
     )
-    today_requests = result.scalar() or 0
+    today_requests = today_result.scalar() or 0
+
+    # This week's requests
+    week_result = await db.execute(
+        select(func.count(ObservabilityLog.id)).where(
+            ObservabilityLog.created_at >= datetime.utcnow() - timedelta(days=7)
+        )
+    )
+    week_requests = week_result.scalar() or 0
+
+    # Total cost
+    cost_result = await db.execute(
+        select(func.sum(ObservabilityLog.cost_usd))
+    )
+    total_cost_usd = float(cost_result.scalar() or 0.0)
 
     return {
         "today_requests": today_requests,
-        "week_requests": 0,
+        "week_requests": week_requests,
         "month_requests": 0,
-        "total_cost": 0.0
+        "total_cost_usd": total_cost_usd
     }
 
 @router.get("/usage")
