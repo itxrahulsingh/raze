@@ -10,7 +10,7 @@ import structlog
 
 from app.config import get_settings
 from app.database import connect_db, disconnect_db, connect_redis, disconnect_redis
-from app.api.v1 import auth, chat, knowledge, knowledge_settings, memory, tools, admin, analytics, sdk
+from app.api.v1 import auth, chat, knowledge, knowledge_settings, memory, tools, admin, admin_settings, analytics, sdk
 
 settings = get_settings()
 
@@ -142,6 +142,7 @@ app.include_router(knowledge_settings.router, prefix="/api/v1", tags=["knowledge
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
+app.include_router(admin_settings.router, prefix="/api/v1", tags=["admin"])
 app.include_router(analytics.router, prefix="/api/v1/analytics", tags=["analytics"])
 app.include_router(sdk.router, prefix="/api/v1", tags=["sdk"])
 
