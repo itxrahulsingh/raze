@@ -71,7 +71,12 @@ export default function SettingsPage() {
 
   const fetchOllamaModels = async () => {
     try {
-      const res = await fetch('/api/v1/admin/ollama-models')
+      const token = localStorage.getItem('access_token')
+      const res = await fetch('/api/v1/admin/ollama-models', {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        }
+      })
       if (res.ok) {
         const data = await res.json()
         setAvailableModels(data.models || [])
