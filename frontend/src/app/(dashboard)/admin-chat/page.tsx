@@ -31,6 +31,8 @@ interface Conversation {
 
 export default function AdminChatPage() {
   const settings = useSettings()
+  const whiteLabelSettings =
+    'whiteLabelSettings' in settings ? settings.whiteLabelSettings : settings
   const { token, isAuthenticated } = useAuth()
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [messages, setMessages] = useState<Message[]>([])
@@ -254,9 +256,11 @@ export default function AdminChatPage() {
       <Card className="min-h-[680px]">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
-            {settings.logo_url ? <img src={settings.logo_url} alt="Logo" className="h-5 w-5 rounded" /> : null}
-            <CardTitle className="text-base" style={{ color: settings.brand_color || undefined }}>
-              {settings.brand_name}
+            {whiteLabelSettings.logo_url ? (
+              <img src={whiteLabelSettings.logo_url} alt="Logo" className="h-5 w-5 rounded" />
+            ) : null}
+            <CardTitle className="text-base" style={{ color: whiteLabelSettings.brand_color || undefined }}>
+              {whiteLabelSettings.brand_name}
             </CardTitle>
           </div>
           <CardDescription>Conversation sessions</CardDescription>
