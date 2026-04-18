@@ -1,5 +1,6 @@
 'use client'
 import { useEffect, useState } from 'react'
+import { useAuth } from '@/lib/auth-context'
 
 interface ConversationDetail {
   id: string
@@ -30,6 +31,7 @@ interface Message {
 }
 
 export default function ConversationsPage() {
+  const { token, isAuthenticated } = useAuth()
   const [conversations, setConversations] = useState<ConversationDetail[]>([])
   const [selectedConvId, setSelectedConvId] = useState<string>('')
   const [selectedMessages, setSelectedMessages] = useState<Message[]>([])
@@ -38,49 +40,61 @@ export default function ConversationsPage() {
   const [searchTerm, setSearchTerm] = useState('')
   const [page, setPage] = useState(1)
   const [totalConversations, setTotalConversations] = useState(0)
+  const [error, setError] = useState<string | null>(null)
 
   const itemsPerPage = 10
 
   useEffect(() => {
-    fetchConversations(page)
-  }, [page])
+    if (isAuthenticated && token) {
+      fetchConversations(page)
+    }
+  }, [page, isAuthenticated, token])
 
   const fetchConversations = async (pageNum: number) => {
+    if (!token) return
+
     setLoading(true)
     try {
-      const token = localStorage.getItem('access_token')
-      
       const res = await fetch(`/api/v1/chat/conversations?page=${pageNum}&page_size=${itemsPerPage}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      
+
       if (res.ok) {
         const data = await res.json()
         setConversations(data.items || [])
         setTotalConversations(data.total || 0)
+        setError(null)
+      } else if (res.status === 401) {
+        setError('Session expired. Please refresh the page.')
       }
     } catch (e) {
       console.error('Failed to fetch conversations:', e)
+      setError('Failed to load conversations')
     } finally {
       setLoading(false)
     }
   }
 
   const loadConversationMessages = async (convId: string) => {
+    if (!token) return
+
     setLoadingMessages(true)
     setSelectedConvId(convId)
     try {
-      const token = localStorage.getItem('access_token')
       const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      
+
       if (res.ok) {
         const data = await res.json()
         setSelectedMessages(data.items || [])
+        setError(null)
+      } else if (res.status === 401) {
+        setError('Session expired. Please refresh the page.')
       }
     } catch (e) {
       console.error('Failed to load messages:', e)
+      setError('Failed to load messages')
     } finally {
       setLoadingMessages(false)
     }
@@ -88,21 +102,27 @@ export default function ConversationsPage() {
 
   const deleteConversation = async (convId: string) => {
     if (!confirm('Delete this conversation?')) return
-    
+    if (!token) return
+
     try {
-      const token = localStorage.getItem('access_token')
-      await fetch(`/api/v1/chat/conversations/${convId}`, {
+      const res = await fetch(`/api/v1/chat/conversations/${convId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      
-      fetchConversations(page)
-      if (selectedConvId === convId) {
-        setSelectedConvId('')
-        setSelectedMessages([])
+
+      if (res.ok) {
+        fetchConversations(page)
+        if (selectedConvId === convId) {
+          setSelectedConvId('')
+          setSelectedMessages([])
+        }
+        setError(null)
+      } else if (res.status === 401) {
+        setError('Session expired. Please refresh the page.')
       }
     } catch (e) {
       console.error('Failed to delete conversation:', e)
+      setError('Failed to delete conversation')
     }
   }
 
@@ -113,8 +133,24 @@ export default function ConversationsPage() {
   const totalPages = Math.ceil(totalConversations / itemsPerPage)
   const currentConv = conversations.find(c => c.id === selectedConvId)
 
+  if (!isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-lg text-gray-600 mb-4">Loading...</p>
+          <p className="text-sm text-gray-400">Please wait while authentication initializes</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
+      {error && (
+        <div className="bg-red-50 border border-red-200 p-4 text-sm text-red-700 rounded-lg">
+          {error}
+        </div>
+      )}
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Conversations</h1>
         <div className="text-sm text-gray-600">
