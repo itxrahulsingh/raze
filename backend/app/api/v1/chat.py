@@ -77,10 +77,18 @@ async def get_optional_user(
     Attempt JWT auth, then API key auth, then fall through to None
     (anonymous SDK users identified only by session_id cookie).
     """
+    from app.core.security import verify_token
+
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
         try:
-            return await get_current_user(token=token, db=db)
+            payload = verify_token(token, expected_type="access")
+            user_id: str | None = payload.get("sub")
+            if user_id:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user: User | None = result.scalar_one_or_none()
+                if user and user.is_active:
+                    return user
         except HTTPException:
             pass
 

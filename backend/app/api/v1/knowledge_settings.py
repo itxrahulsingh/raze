@@ -9,7 +9,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_redis
 from app.models.user import User
-from app.core.security import get_current_admin
 from app.api.v1 import deps
 
 logger = structlog.get_logger(__name__)
@@ -83,7 +82,7 @@ async def get_knowledge_settings(
 async def update_knowledge_settings(
     request: Request,
     settings_update: dict[str, Any],
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
 ) -> dict[str, Any]:
     """Update knowledge system settings (admin only)."""
     await deps.apply_rate_limit(request, "knowledge_settings_write", 60, 60, current_user)
@@ -120,7 +119,7 @@ async def update_knowledge_settings(
 @router.post("/clear-settings-cache")
 async def clear_settings_cache(
     request: Request,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
 ):
     """Clear cached knowledge settings (admin only)."""
     await deps.apply_rate_limit(request, "knowledge_settings_clear_cache", 120, 60, current_user)

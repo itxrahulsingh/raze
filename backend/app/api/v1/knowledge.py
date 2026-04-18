@@ -63,8 +63,9 @@ from app.schemas.knowledge import (
     KnowledgeSourceListResponse,
     KnowledgeSourceResponse,
 )
-from app.core.security import get_current_admin, get_current_user
+from app.core.security import get_current_user
 from app.core.dependencies import check_rate_limit
+from app.api.v1 import deps
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/knowledge", tags=["Knowledge"])
@@ -492,7 +493,7 @@ async def get_source(
 )
 async def delete_source(
     source_id: uuid.UUID,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Hard-delete a knowledge source and all its chunks (cascade)."""
@@ -519,7 +520,7 @@ async def delete_source(
 async def approve_source(
     source_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """Approve a pending source and trigger ingestion processing."""
@@ -570,7 +571,7 @@ async def approve_source(
 async def reject_source(
     source_id: uuid.UUID,
     reason: str = Query(..., min_length=1, max_length=2048),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """Reject a knowledge source with a mandatory reason."""
@@ -607,7 +608,7 @@ async def reject_source(
 async def reprocess_source(
     source_id: uuid.UUID,
     background_tasks: BackgroundTasks,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """
@@ -800,7 +801,7 @@ async def list_chunks(
 async def update_chunk(
     chunk_id: uuid.UUID,
     content: str = Form(..., min_length=1, max_length=65536),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeChunkResponse:
     """
@@ -835,7 +836,7 @@ async def update_chunk(
 )
 async def delete_chunk(
     chunk_id: uuid.UUID,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a single knowledge chunk."""
@@ -914,7 +915,7 @@ async def rollback_chunk_version(
     chunk_id: uuid.UUID,
     target_version: int = Query(..., ge=1),
     reason: str = Query(default=""),
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """
@@ -1034,7 +1035,7 @@ async def update_source(
     can_use_in_chat: bool | None = None,
     can_use_in_search: bool | None = None,
     is_active: bool | None = None,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """Update source usage controls (admin only)."""

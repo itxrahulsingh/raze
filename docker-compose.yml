@@ -86,10 +86,13 @@ services:
       OLLAMA_HOST: 0.0.0.0:11434
     volumes:
       - ollama_data:/root/.ollama
+      - ./docker/ollama-init.sh:/ollama-init.sh:ro
     ports:
       - "11434:11434"
     networks:
       - raze_internal
+    # Run ollama and initialize models on startup
+    entrypoint: sh -c 'ollama serve & sleep 5 && bash /ollama-init.sh && wait'
     # Uncomment to enable GPU support (NVIDIA)
     # deploy:
     #   resources:

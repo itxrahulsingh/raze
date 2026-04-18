@@ -10,7 +10,7 @@ import structlog
 
 from app.config import get_settings
 from app.database import connect_db, disconnect_db, connect_redis, disconnect_redis
-from app.api.v1 import auth, chat, knowledge, knowledge_settings, memory, tools, admin, admin_settings, analytics, sdk
+from app.api.v1 import auth, chat, chat_sdk, knowledge, knowledge_settings, memory, tools, admin, admin_settings, analytics, sdk
 
 settings = get_settings()
 
@@ -137,6 +137,7 @@ async def detailed_health_check():
 # Include routers
 app.include_router(auth.router, prefix="/api/v1", tags=["auth"])
 app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
+app.include_router(chat_sdk.router, prefix="/api/v1", tags=["chat"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(knowledge_settings.router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])

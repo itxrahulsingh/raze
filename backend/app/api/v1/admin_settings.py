@@ -6,7 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db, get_redis
-from app.core.security import get_current_admin
 from app.api.v1 import deps
 from app.models.user import User
 
@@ -36,11 +35,66 @@ async def get_ollama_models(
         return {"models": [], "count": 0, "error": str(e)}
 
 
+@router.post("/ai-config")
+async def save_ai_config(
+    request: Request,
+    config: dict,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Save AI configuration (model selection, temperature, etc)."""
+    from app.models.ai_config import AIConfig
+    import uuid
+
+    await deps.apply_rate_limit(request, "save_ai_config", 60, 60, current_user)
+
+    try:
+        # Create or update AI config in database
+        ai_config = AIConfig(
+            id=uuid.uuid4(),
+            name=config.get("name", f"{config.get('provider', 'openai')} - {config.get('model_name', 'default')}"),
+            provider=config.get("provider", "openai"),
+            model_name=config.get("model_name", "gpt-4-turbo"),
+            temperature=float(config.get("temperature", 0.7)),
+            max_tokens=int(config.get("max_tokens", 2048)),
+            top_p=float(config.get("top_p", 1.0)),
+            is_default=bool(config.get("is_default", False)),
+            is_active=True,
+            streaming_enabled=bool(config.get("streaming_enabled", True)),
+            tool_calling_enabled=bool(config.get("tool_calling_enabled", True)),
+            memory_enabled=bool(config.get("memory_enabled", True)),
+            knowledge_enabled=bool(config.get("knowledge_enabled", True)),
+        )
+        db.add(ai_config)
+        await db.commit()
+        await db.refresh(ai_config)
+
+        logger.info(
+            "ai_config.saved",
+            admin_id=str(current_user.id),
+            provider=config.get("provider"),
+            model=config.get("model_name"),
+        )
+
+        return {
+            "status": "saved",
+            "id": str(ai_config.id),
+            "provider": ai_config.provider,
+            "model": ai_config.model_name,
+        }
+    except Exception as e:
+        logger.error("ai_config.save_failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to save AI configuration: {str(e)}",
+        )
+
+
 @router.post("/provider-config")
 async def save_provider_config(
     request: Request,
     config: dict,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
 ) -> dict:
     """Save provider API configurations (admin only)."""
     await deps.apply_rate_limit(request, "save_provider_config", 60, 60, current_user)
@@ -88,7 +142,7 @@ async def save_provider_config(
 async def save_white_label(
     request: Request,
     settings_data: dict,
-    current_user: User = Depends(get_current_admin),
+    current_user: User = Depends(deps.get_current_user),
 ) -> dict:
     """Save white label settings (admin only)."""
     await deps.apply_rate_limit(request, "save_white_label", 60, 60, current_user)

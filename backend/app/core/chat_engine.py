@@ -329,15 +329,18 @@ class ChatEngine:
         context_sections: list[str] = []
 
         # Knowledge retrieval (parallel with memory)
+        async def _empty_list():
+            return []
+
         knowledge_task = (
             self._search_knowledge(message, ai_config)
             if use_knowledge and (ai_config is None or ai_config.knowledge_enabled)
-            else asyncio.coroutine(lambda: [])()
+            else _empty_list()
         )
         memory_task = (
             self._memory.search_memories(user_id, message, top_k=5)
             if use_memory and user_id and (ai_config is None or ai_config.memory_enabled)
-            else asyncio.coroutine(lambda: [])()
+            else _empty_list()
         )
 
         knowledge_chunks, memory_items = await asyncio.gather(
