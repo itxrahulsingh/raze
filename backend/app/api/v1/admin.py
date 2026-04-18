@@ -113,6 +113,79 @@ async def get_dashboard(
     }
 
 
+# ─── STATISTICS ─────────────────────────────────────────────────────────────
+
+
+@router.get("/stats")
+async def get_conversation_stats(
+    request: Request,
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get comprehensive conversation statistics."""
+    await deps.apply_rate_limit(request, "admin_stats", 120, 60, current_user)
+
+    # Count conversations
+    total_convs = (await db.execute(select(func.count(Conversation.id)))).scalar() or 0
+    active_convs = (await db.execute(
+        select(func.count(Conversation.id)).where(Conversation.status == ConversationStatus.active.value)
+    )).scalar() or 0
+
+    # Count messages
+    total_msgs = (await db.execute(select(func.count(Message.id)))).scalar() or 0
+
+    # Sum tokens and cost
+    total_tokens = (await db.execute(
+        select(func.sum(Conversation.total_tokens))
+    )).scalar() or 0
+    total_cost = (await db.execute(
+        select(func.sum(Conversation.total_cost_usd))
+    )).scalar() or 0.0
+
+    # Calculate averages
+    avg_tokens = total_tokens / total_convs if total_convs > 0 else 0
+    avg_cost = total_cost / total_convs if total_convs > 0 else 0.0
+
+    return {
+        "total_conversations": total_convs,
+        "active_conversations": active_convs,
+        "total_messages": total_msgs,
+        "total_tokens": int(total_tokens),
+        "total_cost_usd": round(float(total_cost), 4),
+        "avg_tokens_per_conversation": round(float(avg_tokens), 2),
+        "avg_cost_per_conversation": round(float(avg_cost), 6),
+    }
+
+
+@router.get("/session-stats")
+async def get_session_stats(
+    request: Request,
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get user session statistics."""
+    await deps.apply_rate_limit(request, "admin_session_stats", 120, 60, current_user)
+
+    from app.models.analytics import UserSession
+
+    # Count sessions
+    total_sessions = (await db.execute(select(func.count(UserSession.id)))).scalar() or 0
+    active_sessions = (await db.execute(
+        select(func.count(UserSession.id)).where(UserSession.is_active.is_(True))
+    )).scalar() or 0
+
+    # Sum session messages
+    total_session_messages = (await db.execute(
+        select(func.sum(UserSession.message_count))
+    )).scalar() or 0
+
+    return {
+        "total_sessions": total_sessions,
+        "active_sessions": active_sessions,
+        "total_session_messages": int(total_session_messages),
+    }
+
+
 # ─── AI CONFIGURATION MANAGEMENT ────────────────────────────────────────────
 
 
