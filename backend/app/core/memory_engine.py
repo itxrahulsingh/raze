@@ -15,7 +15,7 @@ from redis.asyncio import Redis
 
 from app.models.memory import Memory, MemoryRetentionPolicy
 from app.models.conversation import Message
-from app.core.vector_search import VectorSearchEngine
+from app.core.vector_search import VectorSearchEngine, VectorPoint
 from app.core.llm_router import LLMRouter
 from app.config import get_settings
 
@@ -68,8 +68,8 @@ class MemoryEngine:
             # Upsert to vector DB if has embedding
             if embedding:
                 await self.vector_search.upsert_vectors(
-                    "memory",
-                    [(memory.id, embedding, {"memory_id": memory.id, "type": memory_type})]
+                    self.settings.qdrant_collection_memory,
+                    [VectorPoint(id=str(memory.id), vector=embedding, payload={"memory_id": str(memory.id), "type": memory_type})]
                 )
 
             logger.info(f"Stored memory {memory.id} for user {user_id}")

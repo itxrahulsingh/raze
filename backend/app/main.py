@@ -44,6 +44,14 @@ async def lifespan(app: FastAPI):
     # Startup
     await connect_db()
     await connect_redis()
+
+    # Initialize Qdrant collections
+    from app.core.vector_search import VectorSearchEngine
+    vs = VectorSearchEngine()
+    await vs.create_collection(settings.qdrant_collection_knowledge, vector_size=settings.qdrant_vector_size)
+    await vs.create_collection(settings.qdrant_collection_memory, vector_size=settings.qdrant_vector_size)
+    logger.info("Qdrant collections initialized")
+
     logger.info("RAZE AI OS started successfully")
 
     yield

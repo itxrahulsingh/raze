@@ -106,6 +106,7 @@ services:
     volumes:
       - ./backend:/app
       - backend_cache:/root/.cache
+      - backend_storage:/app/storage
     expose:
       - "8000"
     healthcheck:
@@ -176,6 +177,8 @@ volumes:
   qdrant_data:
     driver: local
   backend_cache:
+    driver: local
+  backend_storage:
     driver: local
   nginx_logs:
     driver: local

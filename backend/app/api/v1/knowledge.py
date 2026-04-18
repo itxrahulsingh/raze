@@ -17,6 +17,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import time
@@ -661,16 +662,20 @@ async def search_knowledge(
         llm = LLMRouter()
         vs = VectorSearchEngine()
         engine = KnowledgeEngine(db, llm, vs)
-        raw_results = await engine.search(
+
+        # Build filters for source_ids and tags
+        filters = {}
+        if body.source_ids:
+            filters["source_id"] = [str(sid) for sid in body.source_ids]
+        if body.tags:
+            filters["tags"] = body.tags
+
+        raw_results = await engine.search_knowledge(
             query=body.query,
-            mode=body.mode,
-            limit=body.limit,
+            top_k=body.limit,
             score_threshold=body.score_threshold,
-            source_ids=[str(sid) for sid in body.source_ids],
-            tags=body.tags,
-            source_types=[t.value for t in body.source_types],
-            semantic_weight=body.semantic_weight,
-            keyword_weight=body.keyword_weight,
+            filters=filters or None,
+            approved_only=True,
         )
     except ImportError:
         # Fallback: basic SQL ILIKE search
@@ -693,15 +698,31 @@ async def search_knowledge(
 
     latency_ms = int((time.monotonic() - start_ts) * 1000)
 
-    results = [
-        KnowledgeSearchResult(
-            chunk=KnowledgeChunkResponse.model_validate(r["chunk"]),
-            source=KnowledgeSourceResponse.model_validate(r["source"]),
-            score=r["score"],
-            highlights=r.get("highlights", []),
+    # Convert raw_results to KnowledgeSearchResult objects
+    # search_knowledge returns: {"chunk_id", "source_id", "source_name", "source_type", "content", ...}
+    # Need to load full ORM objects for response format
+    results = []
+    if raw_results:
+        chunk_ids = [uuid.UUID(r["chunk_id"]) for r in raw_results]
+        chunk_query = await db.execute(
+            select(KnowledgeChunk, KnowledgeSource)
+            .join(KnowledgeSource, KnowledgeChunk.source_id == KnowledgeSource.id)
+            .where(KnowledgeChunk.id.in_(chunk_ids))
         )
-        for r in raw_results
-    ]
+        chunk_rows = {str(row[0].id): row for row in chunk_query.all()}
+
+        for r in raw_results:
+            row = chunk_rows.get(r["chunk_id"])
+            if row:
+                chunk, source = row
+                results.append(
+                    KnowledgeSearchResult(
+                        chunk=KnowledgeChunkResponse.model_validate(chunk),
+                        source=KnowledgeSourceResponse.model_validate(source),
+                        score=r["score"],
+                        highlights=[],
+                    )
+                )
 
     return KnowledgeSearchResponse(
         query=body.query,
