@@ -24,7 +24,7 @@ import structlog
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,18 +49,23 @@ from app.api.v1.deps import apply_rate_limit
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 
 def _hash_password(plain: str) -> str:
-    return _pwd_ctx.hash(plain)
+    # Bcrypt only uses first 72 bytes of password
+    plain_truncated = plain[:72] if plain else ""
+    return bcrypt.hashpw(plain_truncated.encode(), bcrypt.gensalt(rounds=12)).decode()
 
 
 def _verify_password(plain: str, hashed: str) -> bool:
-    return _pwd_ctx.verify(plain, hashed)
+    # Bcrypt only uses first 72 bytes of password
+    plain_truncated = plain[:72] if plain else ""
+    try:
+        return bcrypt.checkpw(plain_truncated.encode(), hashed.encode())
+    except (ValueError, TypeError):
+        return False
 
 
 def _create_access_token(subject: str, settings=None) -> str:
