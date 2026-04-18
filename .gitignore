@@ -55,6 +55,7 @@ chat-sdk/dist/
 # Logs
 logs/
 *.log
+docker-logs
 
 # Database
 *.db

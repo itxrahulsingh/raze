@@ -53,35 +53,16 @@ async def lifespan(app: FastAPI):
     await vs.create_collection(settings.qdrant_collection_memory, vector_size=settings.qdrant_vector_size)
     logger.info("Qdrant collections initialized")
 
-    # Validate Ollama connectivity if enabled
+    # Soft-validate Ollama if enabled (retry on first request if unavailable)
     if settings.ollama_enabled:
         import httpx
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(f"{settings.ollama_base_url}/api/tags")
                 resp.raise_for_status()
                 logger.info("Ollama service validated and healthy")
         except Exception as e:
-            logger.error("Ollama validation failed", error=str(e), base_url=settings.ollama_base_url)
-            raise RuntimeError(f"Ollama service at {settings.ollama_base_url} is not responding. Check OLLAMA_BASE_URL and ensure Ollama container is running.")
-
-    # Validate at least one LLM provider is configured
-    providers_available = []
-    if settings.ollama_enabled:
-        providers_available.append("ollama")
-    if settings.openai_api_key:
-        providers_available.append("openai")
-    if settings.anthropic_api_key:
-        providers_available.append("anthropic")
-    if settings.google_api_key:
-        providers_available.append("gemini")
-    if settings.grok_api_key:
-        providers_available.append("grok")
-
-    if not providers_available:
-        raise RuntimeError("No LLM providers configured. Enable Ollama or set API keys for OpenAI/Anthropic/Gemini/Grok.")
-
-    logger.info("LLM providers available", providers=providers_available)
+            logger.warning("Ollama validation warning - will retry on first request", error=str(e), base_url=settings.ollama_base_url)
 
     logger.info("RAZE AI OS started successfully")
 
