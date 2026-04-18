@@ -408,7 +408,9 @@ class OllamaAdapter:
 
     def __init__(self) -> None:
         self._base_url = settings.ollama_base_url
-        self._client = httpx.AsyncClient(timeout=120.0)
+        # Increased timeout for CPU-based inference
+        timeout_config = httpx.Timeout(600.0, connect=30.0, read=600.0, write=30.0, pool=30.0)
+        self._client = httpx.AsyncClient(timeout=timeout_config, limits=httpx.Limits(max_keepalive_connections=10))
 
     async def generate(
         self,
