@@ -1,6 +1,12 @@
 'use client'
-import { useEffect, useState } from 'react'
+
+import { useEffect, useMemo, useState } from 'react'
 import { useAuth } from '@/lib/auth-context'
+import { MessageSquare, Search, Trash2, BookPlus, ChevronLeft, ChevronRight, Cpu } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 
 interface ConversationDetail {
   id: string
@@ -58,7 +64,7 @@ export default function ConversationsPage() {
     setLoading(true)
     try {
       const res = await fetch(`/api/v1/chat/conversations?page=${pageNum}&page_size=${itemsPerPage}`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
 
       if (res.ok) {
@@ -69,8 +75,7 @@ export default function ConversationsPage() {
       } else if (res.status === 401) {
         setError('Session expired. Please refresh the page.')
       }
-    } catch (e) {
-      console.error('Failed to fetch conversations:', e)
+    } catch {
       setError('Failed to load conversations')
     } finally {
       setLoading(false)
@@ -85,7 +90,7 @@ export default function ConversationsPage() {
     setSelectedConvId(convId)
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
 
       if (res.ok) {
@@ -95,8 +100,7 @@ export default function ConversationsPage() {
       } else if (res.status === 401) {
         setError('Session expired. Please refresh the page.')
       }
-    } catch (e) {
-      console.error('Failed to load messages:', e)
+    } catch {
       setError('Failed to load messages')
     } finally {
       setLoadingMessages(false)
@@ -112,7 +116,7 @@ export default function ConversationsPage() {
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}`, {
         method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
 
       if (res.ok) {
@@ -125,8 +129,7 @@ export default function ConversationsPage() {
       } else if (res.status === 401) {
         setError('Session expired. Please refresh the page.')
       }
-    } catch (e) {
-      console.error('Failed to delete conversation:', e)
+    } catch {
       setError('Failed to delete conversation')
     }
   }
@@ -139,7 +142,7 @@ export default function ConversationsPage() {
     try {
       const res = await fetch(`/api/v1/knowledge/sources/from-conversation/${convId}`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
 
       if (res.ok) {
@@ -157,20 +160,21 @@ export default function ConversationsPage() {
     }
   }
 
-  const filteredConversations = conversations.filter(c =>
-    (c.title || 'Untitled').toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredConversations = useMemo(
+    () =>
+      conversations.filter((c) =>
+        (c.title || 'Untitled').toLowerCase().includes(searchTerm.toLowerCase())
+      ),
+    [conversations, searchTerm]
   )
 
   const totalPages = Math.ceil(totalConversations / itemsPerPage)
-  const currentConv = conversations.find(c => c.id === selectedConvId)
+  const currentConv = conversations.find((c) => c.id === selectedConvId)
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <p className="text-lg text-gray-600 mb-4">Loading...</p>
-          <p className="text-sm text-gray-400">Please wait while authentication initializes</p>
-        </div>
+      <div className="grid h-[70vh] place-items-center">
+        <p className="text-sm text-muted-foreground">Initializing authentication...</p>
       </div>
     )
   }
@@ -178,193 +182,173 @@ export default function ConversationsPage() {
   return (
     <div className="space-y-6">
       {error && (
-        <div className="bg-red-50 border border-red-200 p-4 text-sm text-red-700 rounded-lg">
-          {error}
-        </div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
       )}
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Conversations</h1>
-        <div className="text-sm text-gray-600">
-          Total: {totalConversations} conversations
+
+      <div className="dashboard-surface p-6">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Conversations</p>
+            <h2 className="mt-2 text-3xl font-display font-semibold">Session Intelligence Console</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Review live and historical conversations, inspect model behavior, and promote valuable sessions to knowledge.
+            </p>
+          </div>
+          <Badge variant="secondary">{totalConversations} total sessions</Badge>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        {/* Conversations List */}
-        <div className="col-span-1 bg-white rounded-lg shadow">
-          <div className="p-4 border-b">
-            <input
-              type="text"
-              placeholder="Search conversations..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full px-3 py-2 border rounded-lg text-sm"
-            />
-          </div>
-
-          <div className="space-y-1 max-h-screen overflow-y-auto">
-            {loading ? (
-              <div className="p-4 text-gray-500 text-sm">Loading...</div>
-            ) : filteredConversations.length === 0 ? (
-              <div className="p-4 text-gray-500 text-sm">No conversations found</div>
-            ) : (
-              filteredConversations.map(conv => (
-                <button
-                  key={conv.id}
-                  onClick={() => loadConversationMessages(conv.id)}
-                  className={`w-full text-left px-4 py-3 text-sm border-b hover:bg-blue-50 transition ${
-                    selectedConvId === conv.id ? 'bg-blue-100 border-l-4 border-blue-500' : ''
-                  }`}
-                >
-                  <div className="font-medium truncate">{conv.title || 'Untitled'}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(conv.created_at).toLocaleDateString()} • {conv.message_count} messages
-                  </div>
-                </button>
-              ))
-            )}
-          </div>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="p-4 border-t flex justify-between items-center">
-              <button
-                onClick={() => setPage(p => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="text-sm px-3 py-1 bg-gray-100 rounded disabled:opacity-50"
-              >
-                ← Prev
-              </button>
-              <span className="text-sm">{page} / {totalPages}</span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="text-sm px-3 py-1 bg-gray-100 rounded disabled:opacity-50"
-              >
-                Next →
-              </button>
+      <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+        <Card className="min-h-[620px]">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base">Conversation List</CardTitle>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                className="pl-9"
+                placeholder="Search conversations..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
             </div>
-          )}
-        </div>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {loading ? (
+              <p className="text-sm text-muted-foreground">Loading conversations...</p>
+            ) : filteredConversations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No conversations found.</p>
+            ) : (
+              <div className="space-y-2">
+                {filteredConversations.map((conv) => (
+                  <button
+                    key={conv.id}
+                    onClick={() => loadConversationMessages(conv.id)}
+                    className={`w-full rounded-xl border p-3 text-left transition ${
+                      selectedConvId === conv.id
+                        ? 'border-primary bg-primary/5'
+                        : 'border-border/70 hover:bg-secondary/40'
+                    }`}
+                  >
+                    <p className="truncate text-sm font-medium">{conv.title || 'Untitled'}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {conv.message_count} messages • {new Date(conv.created_at).toLocaleDateString()}
+                    </p>
+                  </button>
+                ))}
+              </div>
+            )}
 
-        {/* Conversation Details & Messages */}
-        <div className="col-span-2 bg-white rounded-lg shadow overflow-hidden flex flex-col">
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-border/60 pt-3">
+                <Button size="sm" variant="outline" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
+                  <ChevronLeft className="mr-1 h-4 w-4" />
+                  Prev
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Page {page} / {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={page === totalPages}
+                >
+                  Next
+                  <ChevronRight className="ml-1 h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="min-h-[620px]">
           {selectedConvId && currentConv ? (
             <>
-              {/* Header with Metadata */}
-              <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-cyan-50">
-                <div className="flex justify-between items-start mb-4">
+              <CardHeader className="border-b border-border/70 pb-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-2xl font-bold">
-                      {currentConv.title || 'Untitled Conversation'}
-                    </h2>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {new Date(currentConv.created_at).toLocaleString()}
-                    </p>
+                    <CardTitle>{currentConv.title || 'Untitled Conversation'}</CardTitle>
+                    <CardDescription>{new Date(currentConv.created_at).toLocaleString()}</CardDescription>
                   </div>
                   <div className="flex gap-2">
-                    <button
+                    <Button
+                      size="sm"
+                      variant="secondary"
                       onClick={() => handleAddToKnowledge(selectedConvId)}
                       disabled={convertingToKnowledge === selectedConvId}
-                      className="px-3 py-2 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 text-sm disabled:opacity-50"
                     >
-                      {convertingToKnowledge === selectedConvId ? '⏳ Adding...' : '📚 Add to Knowledge'}
-                    </button>
-                    <button
-                      onClick={() => deleteConversation(selectedConvId)}
-                      className="px-3 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm"
-                    >
-                      🗑️ Delete
-                    </button>
+                      <BookPlus className="mr-1.5 h-4 w-4" />
+                      {convertingToKnowledge === selectedConvId ? 'Adding...' : 'Add to Knowledge'}
+                    </Button>
+                    <Button size="sm" variant="destructive" onClick={() => deleteConversation(selectedConvId)}>
+                      <Trash2 className="mr-1.5 h-4 w-4" />
+                      Delete
+                    </Button>
                   </div>
                 </div>
 
-                {/* Metadata Cards */}
-                <div className="grid grid-cols-4 gap-3">
-                  <div className="bg-white p-3 rounded border">
-                    <div className="text-xs text-gray-500">Messages</div>
-                    <div className="text-lg font-bold">{currentConv.message_count}</div>
+                <div className="grid gap-2 sm:grid-cols-4">
+                  <div className="rounded-lg border border-border/70 p-2.5 text-xs">
+                    <p className="text-muted-foreground">Messages</p>
+                    <p className="mt-1 text-base font-semibold">{currentConv.message_count}</p>
                   </div>
-                  <div className="bg-white p-3 rounded border">
-                    <div className="text-xs text-gray-500">Tokens</div>
-                    <div className="text-lg font-bold">{currentConv.total_tokens}</div>
+                  <div className="rounded-lg border border-border/70 p-2.5 text-xs">
+                    <p className="text-muted-foreground">Tokens</p>
+                    <p className="mt-1 text-base font-semibold">{currentConv.total_tokens}</p>
                   </div>
-                  <div className="bg-white p-3 rounded border">
-                    <div className="text-xs text-gray-500">Cost</div>
-                    <div className="text-lg font-bold">
-                      ${currentConv.total_cost_usd.toFixed(4)}
-                    </div>
+                  <div className="rounded-lg border border-border/70 p-2.5 text-xs">
+                    <p className="text-muted-foreground">Cost</p>
+                    <p className="mt-1 text-base font-semibold">${currentConv.total_cost_usd.toFixed(4)}</p>
                   </div>
-                  <div className="bg-white p-3 rounded border">
-                    <div className="text-xs text-gray-500">Status</div>
-                    <div className="text-lg font-bold capitalize">{currentConv.status}</div>
+                  <div className="rounded-lg border border-border/70 p-2.5 text-xs">
+                    <p className="text-muted-foreground">Status</p>
+                    <p className="mt-1 text-base font-semibold capitalize">{currentConv.status}</p>
                   </div>
                 </div>
+              </CardHeader>
 
-                {/* Advanced Metadata */}
-                {currentConv.conv_metadata && (
-                  <div className="mt-4 pt-4 border-t text-xs">
-                    <div className="grid grid-cols-2 gap-2">
-                      {currentConv.conv_metadata.ip_address && (
-                        <div>📍 IP: {currentConv.conv_metadata.ip_address}</div>
-                      )}
-                      {currentConv.conv_metadata.country && (
-                        <div>🌍 {currentConv.conv_metadata.country}</div>
-                      )}
-                      {currentConv.conv_metadata.city && (
-                        <div>🏙️ {currentConv.conv_metadata.city}</div>
-                      )}
-                      {currentConv.conv_metadata.user_agent && (
-                        <div className="col-span-2">🔧 {currentConv.conv_metadata.user_agent.substring(0, 50)}...</div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Messages */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
+              <CardContent className="h-[460px] space-y-3 overflow-y-auto py-4">
                 {loadingMessages ? (
-                  <div className="text-center text-gray-500">Loading messages...</div>
+                  <p className="text-sm text-muted-foreground">Loading messages...</p>
                 ) : selectedMessages.length === 0 ? (
-                  <div className="text-center text-gray-500">No messages</div>
+                  <p className="text-sm text-muted-foreground">No messages.</p>
                 ) : (
-                  selectedMessages.map(msg => (
+                  selectedMessages.map((msg) => (
                     <div
                       key={msg.id}
-                      className={`p-4 rounded-lg ${
+                      className={`rounded-xl border p-3 ${
                         msg.role === 'user'
-                          ? 'bg-blue-100 ml-8'
-                          : 'bg-white border border-gray-200 mr-8'
+                          ? 'ml-8 border-primary/30 bg-primary/5'
+                          : 'mr-8 border-border/70 bg-secondary/30'
                       }`}
                     >
-                      <div className="flex justify-between items-start mb-2">
-                        <span className="font-bold text-sm">
-                          {msg.role === 'user' ? '👤 You' : '🤖 AI'}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {new Date(msg.created_at).toLocaleTimeString()}
-                        </span>
+                      <div className="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                        <span className="font-medium">{msg.role === 'user' ? 'User' : 'Assistant'}</span>
+                        <span>{new Date(msg.created_at).toLocaleTimeString()}</span>
                       </div>
-                      <p className="text-sm whitespace-pre-wrap mb-2">{msg.content}</p>
+                      <p className="whitespace-pre-wrap text-sm">{msg.content}</p>
                       {msg.model_used && (
-                        <div className="text-xs text-gray-600 space-x-3">
-                          <span>Model: {msg.model_used}</span>
-                          {msg.tokens_used && <span>• {msg.tokens_used} tokens</span>}
-                          {msg.latency_ms && <span>• ⚡ {msg.latency_ms}ms</span>}
-                        </div>
+                        <p className="mt-2 inline-flex items-center text-xs text-muted-foreground">
+                          <Cpu className="mr-1.5 h-3.5 w-3.5" />
+                          {msg.model_used}
+                          {msg.tokens_used ? ` • ${msg.tokens_used} tokens` : ''}
+                          {msg.latency_ms ? ` • ${msg.latency_ms}ms` : ''}
+                        </p>
                       )}
                     </div>
                   ))
                 )}
-              </div>
+              </CardContent>
             </>
           ) : (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              Select a conversation to view details
-            </div>
+            <CardContent className="grid h-full place-items-center text-center">
+              <div>
+                <MessageSquare className="mx-auto h-8 w-8 text-muted-foreground" />
+                <p className="mt-2 text-sm text-muted-foreground">Select a conversation to view details.</p>
+              </div>
+            </CardContent>
           )}
-        </div>
+        </Card>
       </div>
     </div>
   )

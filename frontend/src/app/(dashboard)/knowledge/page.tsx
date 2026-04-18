@@ -1,7 +1,14 @@
 'use client'
+
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/lib/auth-context'
+import { Upload, FileText, Settings2, Trash2, CheckCircle2, MessageSquarePlus } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 
 interface KnowledgeSource {
   id: string
@@ -37,7 +44,6 @@ export default function KnowledgePage() {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [editingSource, setEditingSource] = useState<KnowledgeSource | null>(null)
   const [showUploadModal, setShowUploadModal] = useState(false)
   const [showArticleModal, setShowArticleModal] = useState(false)
   const [showConversionModal, setShowConversionModal] = useState(false)
@@ -49,7 +55,7 @@ export default function KnowledgePage() {
     description: '',
     content: '',
     tags: '',
-    client_id: ''
+    client_id: '',
   })
 
   const categories = ['documents', 'article', 'chat_session', 'client_document', 'training_material', 'reference']
@@ -64,21 +70,22 @@ export default function KnowledgePage() {
   }, [activeTab, isAuthenticated, token])
 
   const fetchSources = async () => {
-    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
+
     setLoading(true)
     setError(null)
     try {
       const res = await fetch(`/api/v1/knowledge/sources?category=${activeTab}`, {
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) {
         const data = await res.json()
-        setSources(Array.isArray(data) ? data : (data.items || []))
+        setSources(Array.isArray(data) ? data : data.items || [])
       } else if (res.status === 401) {
         setError('Session expired. Please refresh the page.')
       }
-    } catch (e) {
-      console.error('Failed to fetch sources:', e)
+    } catch {
       setError('Failed to load knowledge sources')
     } finally {
       setLoading(false)
@@ -86,17 +93,18 @@ export default function KnowledgePage() {
   }
 
   const fetchConversations = async () => {
-    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
     try {
       const res = await fetch('/api/v1/chat/conversations?page=1&page_size=100', {
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) {
         const data = await res.json()
         setConversations(data.items || [])
       }
-    } catch (e) {
-      console.error('Failed to fetch conversations:', e)
+    } catch {
+      // no-op
     }
   }
 
@@ -115,7 +123,7 @@ export default function KnowledgePage() {
       const res = await fetch('/api/v1/knowledge/sources', {
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}` },
-        body: formData
+        body: formData,
       })
       if (res.ok) {
         setShowUploadModal(false)
@@ -131,22 +139,23 @@ export default function KnowledgePage() {
   }
 
   const handleArticleCreate = async () => {
-    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
     try {
       const res = await fetch('/api/v1/knowledge/articles', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           name: articleForm.name,
           description: articleForm.description,
           content: articleForm.content,
-          tags: articleForm.tags.split(',').map(t => t.trim()),
+          tags: articleForm.tags.split(',').map((t) => t.trim()),
           category: 'article',
-          client_id: articleForm.client_id || null
-        })
+          client_id: articleForm.client_id || null,
+        }),
       })
       if (res.ok) {
         setShowArticleModal(false)
@@ -169,7 +178,7 @@ export default function KnowledgePage() {
     try {
       const res = await fetch(`/api/v1/knowledge/sources/from-conversation/${selectedConvId}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) {
         setShowConversionModal(false)
@@ -187,24 +196,26 @@ export default function KnowledgePage() {
     }
   }
 
-  const handleToggleUsage = async (sourceId: string, field: 'can_use_in_knowledge' | 'can_use_in_chat' | 'can_use_in_search') => {
-    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
+  const handleToggleUsage = async (
+    sourceId: string,
+    field: 'can_use_in_knowledge' | 'can_use_in_chat' | 'can_use_in_search'
+  ) => {
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
     try {
-      const source = sources.find(s => s.id === sourceId)
+      const source = sources.find((s) => s.id === sourceId)
       if (!source) return
 
       const newValue = !source[field]
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ [field]: newValue })
+        body: JSON.stringify({ [field]: newValue }),
       })
-      if (res.ok) {
-        fetchSources()
-      }
+      if (res.ok) fetchSources()
     } catch (e) {
       setError('Failed to update source: ' + String(e))
     }
@@ -219,22 +230,21 @@ export default function KnowledgePage() {
     try {
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
-      if (res.ok) {
-        fetchSources()
-      }
+      if (res.ok) fetchSources()
     } catch (e) {
       setError('Failed to delete source: ' + String(e))
     }
   }
 
   const handleApprove = async (sourceId: string) => {
-    const authToken = token || localStorage.getItem("access_token"); if (!authToken) return
+    const authToken = token || localStorage.getItem('access_token')
+    if (!authToken) return
     try {
       const res = await fetch(`/api/v1/knowledge/sources/${sourceId}/approve`, {
         method: 'PUT',
-        headers: { Authorization: `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) fetchSources()
     } catch (e) {
@@ -244,292 +254,265 @@ export default function KnowledgePage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <p className="text-lg text-gray-600 mb-4">Loading...</p>
-          <p className="text-sm text-gray-400">Please wait while authentication initializes</p>
-        </div>
+      <div className="grid h-[70vh] place-items-center">
+        <p className="text-sm text-muted-foreground">Initializing authentication...</p>
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      {error && (
-        <div className="bg-red-50 border border-red-200 p-4 text-sm text-red-700 rounded-lg">
-          {error}
-        </div>
-      )}
-      <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Advanced Knowledge Management</h1>
-        <div className="flex gap-2">
-          <Link
-            href="/knowledge/settings"
-            className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 font-medium"
-          >
-            ⚙️ Settings
-          </Link>
-          {activeTab === 'article' ? (
-            <button
-              onClick={() => setShowArticleModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-            >
-              + New Article
-            </button>
-          ) : activeTab === 'chat_session' ? (
-            <button
-              onClick={() => setShowConversionModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-            >
-              + Add from Conversation
-            </button>
-          ) : (
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-            >
-              + Upload
-            </button>
-          )}
+      {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
+
+      <div className="dashboard-surface p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Knowledge</p>
+            <h2 className="mt-2 text-3xl font-display font-semibold">Knowledge Operations Hub</h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Manage ingestion pipelines, article authoring, and conversion from conversation memory.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/knowledge/settings">
+              <Button variant="outline">
+                <Settings2 className="mr-2 h-4 w-4" />
+                Settings
+              </Button>
+            </Link>
+            {activeTab === 'article' ? (
+              <Button onClick={() => setShowArticleModal(true)}>
+                <FileText className="mr-2 h-4 w-4" />
+                New Article
+              </Button>
+            ) : activeTab === 'chat_session' ? (
+              <Button onClick={() => setShowConversionModal(true)}>
+                <MessageSquarePlus className="mr-2 h-4 w-4" />
+                Add from Conversation
+              </Button>
+            ) : (
+              <Button onClick={() => setShowUploadModal(true)}>
+                <Upload className="mr-2 h-4 w-4" />
+                Upload
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex space-x-2 border-b overflow-x-auto">
-        {categories.map(tab => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 font-medium border-b-2 whitespace-nowrap ${
-              activeTab === tab
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-600 hover:text-gray-800'
-            }`}
-          >
-            {tab.replace(/_/g, ' ').charAt(0).toUpperCase() + tab.replace(/_/g, ' ').slice(1)}
-          </button>
-        ))}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {categories.map((tab) => {
+          const label = tab.replace(/_/g, ' ')
+          return (
+            <Button
+              key={tab}
+              variant={activeTab === tab ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setActiveTab(tab)}
+            >
+              {label.charAt(0).toUpperCase() + label.slice(1)}
+            </Button>
+          )
+        })}
       </div>
 
-      {/* Upload Modal */}
-      {showUploadModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Upload {activeTab.replace(/_/g, ' ')}</h2>
-            <input
-              type="file"
-              onChange={handleFileUpload}
-              disabled={uploading}
-              className="block w-full mb-4"
-              accept=".pdf,.docx,.txt,.csv,.json,.xlsx,.xls,.html"
-            />
-            {uploading && <p className="text-blue-600">Uploading...</p>}
-            <div className="flex justify-end gap-2 mt-4">
-              <button
-                onClick={() => setShowUploadModal(false)}
-                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Article Modal */}
-      {showArticleModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-2xl w-full max-h-96 overflow-y-auto">
-            <h2 className="text-xl font-bold mb-4">Create New Article</h2>
-            <input
-              type="text"
-              placeholder="Article Title"
-              value={articleForm.name}
-              onChange={(e) => setArticleForm({...articleForm, name: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3"
-            />
-            <textarea
-              placeholder="Description"
-              value={articleForm.description}
-              onChange={(e) => setArticleForm({...articleForm, description: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3 h-20"
-            />
-            <textarea
-              placeholder="Article Content"
-              value={articleForm.content}
-              onChange={(e) => setArticleForm({...articleForm, content: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3 h-40"
-            />
-            <input
-              type="text"
-              placeholder="Tags (comma separated)"
-              value={articleForm.tags}
-              onChange={(e) => setArticleForm({...articleForm, tags: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-3"
-            />
-            <input
-              type="text"
-              placeholder="Client ID (optional)"
-              value={articleForm.client_id}
-              onChange={(e) => setArticleForm({...articleForm, client_id: e.target.value})}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4"
-            />
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowArticleModal(false)}
-                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleArticleCreate}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Create Article
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Conversation to Knowledge Modal */}
-      {showConversionModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-md w-full">
-            <h2 className="text-xl font-bold mb-4">Add Conversation to Knowledge Base</h2>
-            <p className="text-sm text-gray-600 mb-4">Select a conversation to add it as a knowledge source:</p>
-            <div className="space-y-2 max-h-64 overflow-y-auto mb-4">
-              {conversations.length === 0 ? (
-                <p className="text-gray-500 text-sm">No conversations available</p>
-              ) : (
-                conversations.map(conv => (
-                  <button
-                    key={conv.id}
-                    onClick={() => setSelectedConvId(conv.id)}
-                    className={`w-full text-left p-3 rounded-lg border-2 transition ${
-                      selectedConvId === conv.id
-                        ? 'border-blue-600 bg-blue-50'
-                        : 'border-gray-200 hover:border-gray-300'
-                    }`}
-                  >
-                    <div className="font-medium">{conv.title || 'Untitled'}</div>
-                    <div className="text-xs text-gray-500">{conv.message_count} messages • {new Date(conv.created_at).toLocaleDateString()}</div>
-                  </button>
-                ))
-              )}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => {
-                  setShowConversionModal(false)
-                  setSelectedConvId('')
-                }}
-                className="px-4 py-2 text-gray-700 border border-gray-300 rounded-lg"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleConvertConversation}
-                disabled={!selectedConvId || converting}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {converting ? 'Converting...' : 'Add to Knowledge'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Sources List */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="p-6">
-          <h2 className="text-xl font-bold mb-4">Knowledge Sources</h2>
+      <Card>
+        <CardHeader>
+          <CardTitle>Knowledge Sources</CardTitle>
+          <CardDescription>
+            Category: <span className="capitalize">{activeTab.replace(/_/g, ' ')}</span>
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
           {loading ? (
-            <p className="text-gray-600">Loading...</p>
+            <p className="text-sm text-muted-foreground">Loading sources...</p>
           ) : sources.length === 0 ? (
-            <p className="text-gray-600">No sources in this category yet</p>
+            <p className="text-sm text-muted-foreground">No sources in this category yet.</p>
           ) : (
             <div className="space-y-4">
-              {sources.map(source => (
-                <div key={source.id} className="border rounded-lg p-4 hover:bg-gray-50">
-                  <div className="flex justify-between items-start mb-3">
-                    <div className="flex-1">
-                      <h3 className="font-bold text-lg">{source.name}</h3>
-                      <p className="text-sm text-gray-600">{source.description}</p>
-                      <div className="flex gap-2 mt-2">
-                        <span className={`text-xs px-2 py-1 rounded ${source.status === 'approved' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                          {source.status}
-                        </span>
-                        <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">
-                          {source.type}
-                        </span>
-                        {source.client_id && (
-                          <span className="text-xs px-2 py-1 rounded bg-purple-100 text-purple-800">
-                            Client: {source.client_id}
-                          </span>
-                        )}
+              {sources.map((source) => (
+                <div key={source.id} className="rounded-xl border border-border/70 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-semibold">{source.name}</p>
+                      <p className="mt-1 text-sm text-muted-foreground">{source.description || 'No description provided.'}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Badge variant={source.status === 'approved' ? 'success' : 'warning'}>{source.status}</Badge>
+                        <Badge variant="outline">{source.type}</Badge>
+                        {source.client_id && <Badge variant="secondary">Client: {source.client_id}</Badge>}
                       </div>
                     </div>
-                    <div className="text-right text-sm text-gray-600">
-                      {source.file_size && <p>{(source.file_size / 1024).toFixed(1)} KB</p>}
+                    <div className="text-right text-xs text-muted-foreground">
+                      {source.file_size ? <p>{(source.file_size / 1024).toFixed(1)} KB</p> : null}
                       <p>{source.chunk_count} chunks</p>
                     </div>
                   </div>
 
-                  {/* Usage Controls */}
-                  <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-gray-50 rounded">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="mt-3 grid gap-2 rounded-lg border border-border/60 bg-secondary/30 p-3 sm:grid-cols-3">
+                    <label className="flex items-center justify-between text-sm">
+                      <span>Use in Knowledge</span>
                       <input
                         type="checkbox"
                         checked={source.can_use_in_knowledge}
                         onChange={() => handleToggleUsage(source.id, 'can_use_in_knowledge')}
-                        className="w-4 h-4"
+                        className="h-4 w-4"
                       />
-                      <span className="text-sm">Use in Knowledge</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex items-center justify-between text-sm">
+                      <span>Use in Chat</span>
                       <input
                         type="checkbox"
                         checked={source.can_use_in_chat}
                         onChange={() => handleToggleUsage(source.id, 'can_use_in_chat')}
-                        className="w-4 h-4"
+                        className="h-4 w-4"
                       />
-                      <span className="text-sm">Use in Chat</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex items-center justify-between text-sm">
+                      <span>Use in Search</span>
                       <input
                         type="checkbox"
                         checked={source.can_use_in_search}
                         onChange={() => handleToggleUsage(source.id, 'can_use_in_search')}
-                        className="w-4 h-4"
+                        className="h-4 w-4"
                       />
-                      <span className="text-sm">Use in Search</span>
                     </label>
                   </div>
 
-                  {/* Actions */}
-                  <div className="flex gap-2">
+                  <div className="mt-3 flex gap-2">
                     {source.status === 'pending' && (
-                      <button
-                        onClick={() => handleApprove(source.id)}
-                        className="px-3 py-1 text-sm bg-green-100 text-green-800 rounded hover:bg-green-200"
-                      >
+                      <Button size="sm" variant="secondary" onClick={() => handleApprove(source.id)}>
+                        <CheckCircle2 className="mr-1.5 h-4 w-4" />
                         Approve
-                      </button>
+                      </Button>
                     )}
-                    <button
-                      onClick={() => handleDelete(source.id)}
-                      className="px-3 py-1 text-sm bg-red-100 text-red-800 rounded hover:bg-red-200"
-                    >
+                    <Button size="sm" variant="destructive" onClick={() => handleDelete(source.id)}>
+                      <Trash2 className="mr-1.5 h-4 w-4" />
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </div>
               ))}
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      {showUploadModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-lg">
+            <CardHeader>
+              <CardTitle>Upload {activeTab.replace(/_/g, ' ')}</CardTitle>
+              <CardDescription>Select a file to ingest into knowledge.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                type="file"
+                onChange={handleFileUpload}
+                disabled={uploading}
+                accept=".pdf,.docx,.txt,.csv,.json,.xlsx,.xls,.html"
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowUploadModal(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
-      </div>
+      )}
+
+      {showArticleModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-2xl">
+            <CardHeader>
+              <CardTitle>Create New Article</CardTitle>
+              <CardDescription>Author structured content for retrieval.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Input
+                placeholder="Article title"
+                value={articleForm.name}
+                onChange={(e) => setArticleForm({ ...articleForm, name: e.target.value })}
+              />
+              <Textarea
+                placeholder="Description"
+                rows={3}
+                value={articleForm.description}
+                onChange={(e) => setArticleForm({ ...articleForm, description: e.target.value })}
+              />
+              <Textarea
+                placeholder="Article content"
+                rows={8}
+                value={articleForm.content}
+                onChange={(e) => setArticleForm({ ...articleForm, content: e.target.value })}
+              />
+              <Input
+                placeholder="Tags (comma separated)"
+                value={articleForm.tags}
+                onChange={(e) => setArticleForm({ ...articleForm, tags: e.target.value })}
+              />
+              <Input
+                placeholder="Client ID (optional)"
+                value={articleForm.client_id}
+                onChange={(e) => setArticleForm({ ...articleForm, client_id: e.target.value })}
+              />
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowArticleModal(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleArticleCreate}>Create Article</Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {showConversionModal && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
+          <Card className="w-full max-w-xl">
+            <CardHeader>
+              <CardTitle>Add Conversation to Knowledge</CardTitle>
+              <CardDescription>Promote a chat session into a reusable source.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="max-h-72 space-y-2 overflow-y-auto">
+                {conversations.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No conversations available.</p>
+                ) : (
+                  conversations.map((conv) => (
+                    <button
+                      key={conv.id}
+                      onClick={() => setSelectedConvId(conv.id)}
+                      className={`w-full rounded-xl border p-3 text-left ${
+                        selectedConvId === conv.id ? 'border-primary bg-primary/5' : 'border-border/70 hover:bg-secondary/30'
+                      }`}
+                    >
+                      <p className="text-sm font-medium">{conv.title || 'Untitled'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {conv.message_count} messages • {new Date(conv.created_at).toLocaleDateString()}
+                      </p>
+                    </button>
+                  ))
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowConversionModal(false)
+                    setSelectedConvId('')
+                  }}
+                >
+                  Cancel
+                </Button>
+                <Button onClick={handleConvertConversation} disabled={!selectedConvId || converting}>
+                  {converting ? 'Converting...' : 'Add to Knowledge'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   )
 }

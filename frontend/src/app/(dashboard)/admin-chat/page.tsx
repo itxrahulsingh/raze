@@ -1,7 +1,13 @@
 'use client'
-import { useEffect, useState, useRef } from 'react'
+
+import { useEffect, useRef, useState } from 'react'
 import { useSettings } from '@/lib/settings-context'
 import { useAuth } from '@/lib/auth-context'
+import { Bot, MessageSquarePlus, Send, Sparkles, Database } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
 
 interface Message {
   id: string
@@ -43,11 +49,8 @@ export default function AdminChatPage() {
     scrollToBottom()
   }, [messages])
 
-  // Load conversation history when auth is ready
   useEffect(() => {
-    if (isAuthenticated && token) {
-      fetchConversations()
-    }
+    if (isAuthenticated && token) fetchConversations()
   }, [isAuthenticated, token])
 
   const fetchConversations = async () => {
@@ -60,7 +63,7 @@ export default function AdminChatPage() {
     setLoadingConvos(true)
     try {
       const res = await fetch('/api/v1/chat/conversations?page=1&page_size=50', {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) {
         const data = await res.json()
@@ -73,8 +76,7 @@ export default function AdminChatPage() {
       } else if (res.status === 401) {
         setError('Session expired. Please refresh the page.')
       }
-    } catch (e) {
-      console.error('Failed to fetch conversations:', e)
+    } catch {
       setError('Failed to load conversations')
     } finally {
       setLoadingConvos(false)
@@ -87,24 +89,26 @@ export default function AdminChatPage() {
 
     try {
       const res = await fetch(`/api/v1/chat/conversations/${convId}/messages?page=1&page_size=100`, {
-        headers: { 'Authorization': `Bearer ${authToken}` }
+        headers: { Authorization: `Bearer ${authToken}` },
       })
       if (res.ok) {
         const data = await res.json()
         const msgs = data.items || []
-        setMessages(msgs.map((m: any) => ({
-          id: m.id,
-          role: m.role === 'user' ? 'user' : 'assistant',
-          content: m.content || '',
-          timestamp: m.created_at,
-          model_used: m.model_used,
-          tokens_used: m.tokens_used,
-          latency_ms: m.latency_ms,
-        })))
+        setMessages(
+          msgs.map((m: any) => ({
+            id: m.id,
+            role: m.role === 'user' ? 'user' : 'assistant',
+            content: m.content || '',
+            timestamp: m.created_at,
+            model_used: m.model_used,
+            tokens_used: m.tokens_used,
+            latency_ms: m.latency_ms,
+          }))
+        )
         setError(null)
       }
-    } catch (e) {
-      console.error('Failed to load messages:', e)
+    } catch {
+      // no-op
     }
   }
 
@@ -124,12 +128,11 @@ export default function AdminChatPage() {
       timestamp: new Date().toISOString(),
     }
 
-    setMessages(prev => [...prev, userMessage])
+    setMessages((prev) => [...prev, userMessage])
     setInput('')
     setLoading(true)
     setError(null)
 
-    // Create streaming message placeholder
     const assistantMessageId = (Date.now() + 1).toString()
     const streamingMessage: Message = {
       id: assistantMessageId,
@@ -138,36 +141,32 @@ export default function AdminChatPage() {
       timestamp: new Date().toISOString(),
       isStreaming: true,
     }
-    setMessages(prev => [...prev, streamingMessage])
+    setMessages((prev) => [...prev, streamingMessage])
 
     try {
-      const startTime = Date.now()
-
       const res = await fetch('/api/v1/chat/stream', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${authToken}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           message: userMessage.content,
           use_knowledge: useKnowledge,
           session_id: currentConversationId || 'admin-chat-new',
-        })
+        }),
       })
 
       if (!res.ok) {
         if (res.status === 401) {
           setError('Session expired. Please refresh.')
-          setMessages(prev => prev.filter(m => m.id !== assistantMessageId))
+          setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId))
           return
         }
         throw new Error(`Stream failed: ${res.status}`)
       }
 
-      if (!res.body) {
-        throw new Error('No response body')
-      }
+      if (!res.body) throw new Error('No response body')
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -176,7 +175,6 @@ export default function AdminChatPage() {
       let latencyMs = 0
       let modelUsed = 'mistral:latest'
 
-      let isFirstChunk = true
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
@@ -185,57 +183,53 @@ export default function AdminChatPage() {
         const lines = text.split('\n')
 
         for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const json = JSON.parse(line.slice(6))
-
-              if (json.event === 'delta' && json.text) {
-                isFirstChunk = false
-                fullContent += json.text
-                // Update message in REAL-TIME (word by word)
-                setMessages(prev => prev.map(m =>
-                  m.id === assistantMessageId
-                    ? { ...m, content: fullContent }
-                    : m
-                ))
-              } else if (json.event === 'done') {
-                tokenCount = json.tokens_used || 0
-                latencyMs = json.latency_ms || 0
-                modelUsed = json.model_used || 'mistral:latest'
-              }
-            } catch (e) {
-              // Ignore parse errors
+          if (!line.startsWith('data: ')) continue
+          try {
+            const json = JSON.parse(line.slice(6))
+            if (json.event === 'delta' && json.text) {
+              fullContent += json.text
+              setMessages((prev) =>
+                prev.map((m) => (m.id === assistantMessageId ? { ...m, content: fullContent } : m))
+              )
+            } else if (json.event === 'done') {
+              tokenCount = json.tokens_used || 0
+              latencyMs = json.latency_ms || 0
+              modelUsed = json.model_used || 'mistral:latest'
             }
+          } catch {
+            // ignore parse issues
           }
         }
       }
 
-      // Update final message with metadata
-      setMessages(prev => prev.map(m =>
-        m.id === assistantMessageId
-          ? {
-              ...m,
-              isStreaming: false,
-              tokens_used: tokenCount,
-              latency_ms: latencyMs,
-              model_used: modelUsed,
-            }
-          : m
-      ))
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMessageId
+            ? {
+                ...m,
+                isStreaming: false,
+                tokens_used: tokenCount,
+                latency_ms: latencyMs,
+                model_used: modelUsed,
+              }
+            : m
+        )
+      )
 
-      // Refresh conversations
       await fetchConversations()
     } catch (e) {
-      console.error('Failed to send message:', e)
       const errorMsg = e instanceof Error ? e.message : 'Unknown error'
       setError(errorMsg)
-      setMessages(prev => prev.filter(m => m.id !== assistantMessageId))
-      setMessages(prev => [...prev, {
-        id: assistantMessageId,
-        role: 'assistant',
-        content: `❌ Error: ${errorMsg}`,
-        timestamp: new Date().toISOString(),
-      }])
+      setMessages((prev) => prev.filter((m) => m.id !== assistantMessageId))
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: assistantMessageId,
+          role: 'assistant',
+          content: `Error: ${errorMsg}`,
+          timestamp: new Date().toISOString(),
+        },
+      ])
     } finally {
       setLoading(false)
     }
@@ -248,152 +242,133 @@ export default function AdminChatPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="text-center">
-          <p className="text-lg text-gray-600 mb-4">Loading...</p>
-          <p className="text-sm text-gray-400">Please wait while authentication initializes</p>
-        </div>
+      <div className="grid h-[70vh] place-items-center">
+        <p className="text-sm text-muted-foreground">Initializing authentication...</p>
       </div>
     )
   }
 
   return (
-    <div className="h-full flex bg-white rounded-lg shadow overflow-hidden">
-      {/* Sidebar */}
-      <div className="w-80 border-r border-gray-200 flex flex-col bg-gradient-to-b from-slate-50 to-gray-50">
-        {/* Header */}
-        <div className="p-4 border-b border-gray-200">
-          <div className="flex items-center gap-2 mb-4">
-            {settings.logo_url && <img src={settings.logo_url} alt="Logo" className="w-6 h-6" />}
-            <h1 className="text-lg font-bold" style={{ color: settings.brand_color }}>
+    <div className="grid gap-4 lg:grid-cols-[320px_1fr]">
+      <Card className="min-h-[680px]">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            {settings.logo_url ? <img src={settings.logo_url} alt="Logo" className="h-5 w-5 rounded" /> : null}
+            <CardTitle className="text-base" style={{ color: settings.brand_color || undefined }}>
               {settings.brand_name}
-            </h1>
+            </CardTitle>
           </div>
-          <button
-            onClick={handleNewChat}
-            className="w-full px-4 py-2 bg-white border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 transition"
-          >
-            + New Chat
-          </button>
-        </div>
-
-        {/* Conversations List */}
-        <div className="flex-1 overflow-y-auto">
+          <CardDescription>Conversation sessions</CardDescription>
+          <Button size="sm" onClick={handleNewChat}>
+            <MessageSquarePlus className="mr-1.5 h-4 w-4" />
+            New Chat
+          </Button>
+        </CardHeader>
+        <CardContent>
           {loadingConvos ? (
-            <div className="p-4 text-center text-gray-500 text-sm">Loading...</div>
+            <p className="text-sm text-muted-foreground">Loading...</p>
           ) : conversations.length === 0 ? (
-            <div className="p-4 text-center text-gray-500 text-sm">No conversations yet</div>
+            <p className="text-sm text-muted-foreground">No conversations yet.</p>
           ) : (
-            <div className="space-y-1 p-2">
-              {conversations.map(conv => (
+            <div className="space-y-2">
+              {conversations.map((conv) => (
                 <button
                   key={conv.id}
                   onClick={() => handleSelectConversation(conv.id)}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-sm transition ${
+                  className={`w-full rounded-xl border p-3 text-left transition ${
                     currentConversationId === conv.id
-                      ? 'bg-white shadow text-slate-900 font-medium'
-                      : 'text-gray-700 hover:bg-white/50'
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border/70 hover:bg-secondary/30'
                   }`}
                 >
-                  <div className="truncate font-medium">{conv.title || 'Untitled'}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(conv.created_at).toLocaleDateString()}
-                  </div>
+                  <p className="truncate text-sm font-medium">{conv.title || 'Untitled'}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{new Date(conv.created_at).toLocaleDateString()}</p>
                 </button>
               ))}
             </div>
           )}
-        </div>
-      </div>
+        </CardContent>
+      </Card>
 
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col">
-        {/* Error Banner */}
-        {error && (
-          <div className="bg-red-50 border-b border-red-200 p-4 text-sm text-red-700">
-            {error}
+      <Card className="min-h-[680px]">
+        <CardHeader className="border-b border-border/70 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Bot className="h-4 w-4 text-primary" />
+              Admin Chat
+            </CardTitle>
+            <Badge variant={token ? 'success' : 'warning'}>{token ? 'Authenticated' : 'No token'}</Badge>
           </div>
-        )}
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-gray-50">
-          {messages.length === 0 && (
-            <div className="flex items-center justify-center h-full text-gray-500">
-              <div className="text-center">
-                <div className="text-5xl mb-4">💬</div>
-                <p className="text-lg font-medium mb-2">Start a conversation</p>
-                <p className="text-sm">Send a message to begin. Streaming will appear word-by-word →</p>
-              </div>
-            </div>
-          )}
-          {messages.map(msg => (
-            <div
-              key={msg.id}
-              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
-              <div
-                className={`max-w-2xl px-4 py-3 rounded-lg ${
-                  msg.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-none'
-                    : 'bg-white text-gray-900 border border-gray-200 rounded-bl-none'
-                }`}
-              >
-                <p className="text-sm whitespace-pre-wrap break-words">{msg.content}</p>
-                {msg.role === 'assistant' && (
-                  <div className="mt-2 pt-2 border-t border-gray-200 flex items-center gap-3 text-xs text-gray-600">
-                    <span>🤖 {msg.model_used || 'mistral:latest'}</span>
-                    {msg.tokens_used && <span>📊 {msg.tokens_used} tokens</span>}
-                    {msg.latency_ms && <span>⚡ {msg.latency_ms}ms</span>}
-                    {msg.isStreaming && <span className="animate-pulse">🔄 Streaming...</span>}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Area */}
-        <div className="border-t border-gray-200 p-4 bg-white">
-          <div className="flex gap-2 mb-3">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
-                checked={useKnowledge}
-                onChange={(e) => setUseKnowledge(e.target.checked)}
-                className="rounded"
-              />
-              <span>Use Knowledge Base</span>
-            </label>
-          </div>
-          <div className="flex gap-2">
+          <CardDescription>Live streaming responses from your backend route.</CardDescription>
+          <label className="flex items-center gap-2 text-sm">
             <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault()
-                  handleSendMessage()
-                }
-              }}
-              placeholder="Type your message... (Shift+Enter for newline)"
-              disabled={loading || !token}
-              className="flex-1 px-4 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+              type="checkbox"
+              checked={useKnowledge}
+              onChange={(e) => setUseKnowledge(e.target.checked)}
+              className="h-4 w-4"
             />
-            <button
-              onClick={handleSendMessage}
-              disabled={loading || !input.trim() || !token}
-              className="px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
-            >
-              {loading ? '⏳' : '→'}
-            </button>
+            <Database className="h-4 w-4 text-muted-foreground" />
+            Use Knowledge Base
+          </label>
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+        </CardHeader>
+
+        <CardContent className="flex h-[560px] flex-col p-0">
+          <div className="flex-1 space-y-3 overflow-y-auto p-4">
+            {messages.length === 0 ? (
+              <div className="grid h-full place-items-center text-center">
+                <div>
+                  <Sparkles className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">Start a conversation to begin streaming output.</p>
+                </div>
+              </div>
+            ) : (
+              messages.map((msg) => (
+                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div
+                    className={`max-w-[80%] rounded-xl border px-3 py-2 text-sm ${
+                      msg.role === 'user'
+                        ? 'border-primary bg-primary text-primary-foreground'
+                        : 'border-border/70 bg-secondary/30'
+                    }`}
+                  >
+                    <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+                    {msg.role === 'assistant' && (
+                      <p className="mt-2 text-xs opacity-80">
+                        {msg.model_used || 'mistral:latest'}
+                        {msg.tokens_used ? ` • ${msg.tokens_used} tokens` : ''}
+                        {msg.latency_ms ? ` • ${msg.latency_ms}ms` : ''}
+                        {msg.isStreaming ? ' • streaming...' : ''}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
+            <div ref={messagesEndRef} />
           </div>
-          <p className="text-xs text-gray-500 mt-2">
-            {token ? '✅ Authenticated - Token auto-refreshes' : '❌ Not authenticated'}
-          </p>
-        </div>
-      </div>
+
+          <div className="border-t border-border/70 p-3">
+            <div className="flex gap-2">
+              <Input
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    handleSendMessage()
+                  }
+                }}
+                placeholder="Type your message..."
+                disabled={loading || !token}
+              />
+              <Button onClick={handleSendMessage} disabled={loading || !input.trim() || !token}>
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   )
 }

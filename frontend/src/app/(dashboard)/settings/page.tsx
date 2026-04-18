@@ -1,22 +1,13 @@
 'use client'
-import { useEffect, useState } from 'react'
 
-interface AIConfig {
-  name: string
-  provider: string
-  model_name: string
-  temperature: number
-  max_tokens: number
-  system_prompt: string
-  is_default: boolean
-  is_active: boolean
-  streaming_enabled: boolean
-  tool_calling_enabled: boolean
-  memory_enabled: boolean
-  knowledge_enabled: boolean
-  fallback_provider?: string
-  fallback_model?: string
-}
+import { useEffect, useState } from 'react'
+import { Bot, KeyRound, Palette, RefreshCcw } from 'lucide-react'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Select } from '@/components/ui/select'
+import { Badge } from '@/components/ui/badge'
 
 interface ProviderConfig {
   apiKey?: string
@@ -24,11 +15,11 @@ interface ProviderConfig {
   orgId?: string
 }
 
-const PROVIDER_MODELS: {[key: string]: string[]} = {
+const PROVIDER_MODELS: { [key: string]: string[] } = {
   openai: ['gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo', 'gpt-4o', 'gpt-4o-mini'],
   anthropic: ['claude-3-opus', 'claude-3-sonnet', 'claude-3-haiku'],
   gemini: ['gemini-pro', 'gemini-pro-vision'],
-  ollama: [], // Will be populated dynamically
+  ollama: [],
   grok: ['grok-2', 'grok-1'],
 }
 
@@ -36,20 +27,17 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState('ai-config')
   const [provider, setProvider] = useState('openai')
   const [model, setModel] = useState('gpt-4-turbo')
-  const [availableModels, setAvailableModels] = useState<string[]>(PROVIDER_MODELS['openai'])
+  const [availableModels, setAvailableModels] = useState<string[]>(PROVIDER_MODELS.openai)
   const [temperature, setTemperature] = useState(0.7)
   const [maxTokens, setMaxTokens] = useState(2000)
   const [systemPrompt, setSystemPrompt] = useState('You are a helpful assistant.')
   const [isDefault, setIsDefault] = useState(true)
-
-  // Feature toggles
   const [streamingEnabled, setStreamingEnabled] = useState(true)
   const [toolCalling, setToolCalling] = useState(true)
   const [memoryEnabled, setMemoryEnabled] = useState(true)
   const [knowledgeEnabled, setKnowledgeEnabled] = useState(true)
 
-  // Provider configs
-  const [providerConfigs, setProviderConfigs] = useState<{[key: string]: ProviderConfig}>({
+  const [providerConfigs, setProviderConfigs] = useState<{ [key: string]: ProviderConfig }>({
     openai: { apiKey: '', orgId: '' },
     anthropic: { apiKey: '' },
     gemini: { apiKey: '' },
@@ -57,7 +45,6 @@ export default function SettingsPage() {
     ollama: { baseUrl: 'http://localhost:11434' },
   })
 
-  // White label settings
   const [brandName, setBrandName] = useState('RAZE')
   const [brandColor, setBrandColor] = useState('#3B82F6')
   const [logoUrl, setLogoUrl] = useState('')
@@ -75,9 +62,7 @@ export default function SettingsPage() {
     try {
       const token = localStorage.getItem('access_token')
       const res = await fetch('/api/v1/admin/white-label', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
+        headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
         const data = await res.json()
@@ -85,8 +70,8 @@ export default function SettingsPage() {
         setBrandColor(data.brand_color || '#3B82F6')
         setLogoUrl(data.logo_url || '')
       }
-    } catch (e) {
-      console.error('Failed to fetch white label settings:', e)
+    } catch {
+      // no-op
     }
   }
 
@@ -94,15 +79,9 @@ export default function SettingsPage() {
     setLoadingModels(true)
     try {
       const token = localStorage.getItem('access_token')
-      if (!token) {
-        console.warn('No auth token, skipping Ollama models fetch')
-        setLoadingModels(false)
-        return
-      }
+      if (!token) return
       const res = await fetch('/api/v1/admin/ollama-models', {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
+        headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
         const data = await res.json()
@@ -111,11 +90,9 @@ export default function SettingsPage() {
         if (provider === 'ollama' && models.length > 0) {
           setModel(models[0])
         }
-      } else {
-        console.error('Failed to fetch Ollama models:', res.status)
       }
-    } catch (e) {
-      console.error('Failed to fetch Ollama models:', e)
+    } catch {
+      // no-op
     } finally {
       setLoadingModels(false)
     }
@@ -128,9 +105,7 @@ export default function SettingsPage() {
     } else {
       const models = PROVIDER_MODELS[newProvider] || []
       setAvailableModels(models)
-      if (models.length > 0) {
-        setModel(models[0])
-      }
+      if (models.length > 0) setModel(models[0])
     }
   }
 
@@ -141,8 +116,8 @@ export default function SettingsPage() {
       const res = await fetch('/api/v1/admin/ai-config', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           name: `${provider} - ${model}`,
@@ -157,7 +132,7 @@ export default function SettingsPage() {
           tool_calling_enabled: toolCalling,
           memory_enabled: memoryEnabled,
           knowledge_enabled: knowledgeEnabled,
-        })
+        }),
       })
       if (res.ok) {
         setSaved(true)
@@ -179,10 +154,10 @@ export default function SettingsPage() {
       const res = await fetch('/api/v1/admin/provider-config', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify(providerConfigs)
+        body: JSON.stringify(providerConfigs),
       })
       if (res.ok) {
         setSaved(true)
@@ -202,14 +177,14 @@ export default function SettingsPage() {
       const res = await fetch('/api/v1/admin/white-label', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
         },
         body: JSON.stringify({
           brand_name: brandName,
           brand_color: brandColor,
           logo_url: logoUrl,
-        })
+        }),
       })
       if (res.ok) {
         setSaved(true)
@@ -225,330 +200,295 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold">Admin Settings</h1>
+      <div className="dashboard-surface p-6">
+        <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Admin Settings</p>
+        <h2 className="mt-2 text-3xl font-display font-semibold">Platform Configuration Studio</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Tune model behavior, provider credentials, and white-label identity from a unified control plane.
+        </p>
+      </div>
 
       {saved && (
-        <div className="bg-green-100 border border-green-400 text-green-800 px-4 py-3 rounded">
-          ✅ Settings saved successfully!
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-700">
+          Settings saved successfully.
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex space-x-2 border-b">
+      <div className="flex flex-wrap gap-2">
         {[
           { id: 'ai-config', label: 'AI Configuration' },
           { id: 'providers', label: 'Provider Setup' },
           { id: 'white-label', label: 'White Label' },
-        ].map(tab => (
-          <button
+        ].map((tab) => (
+          <Button
             key={tab.id}
+            size="sm"
+            variant={activeTab === tab.id ? 'default' : 'outline'}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 font-medium border-b-2 transition ${
-              activeTab === tab.id
-                ? 'border-blue-600 text-blue-600'
-                : 'border-transparent text-gray-600 hover:text-gray-900'
-            }`}
           >
             {tab.label}
-          </button>
+          </Button>
         ))}
       </div>
 
-      {/* AI Configuration Tab */}
       {activeTab === 'ai-config' && (
-        <div className="bg-white p-6 rounded-lg shadow space-y-6">
-          <h2 className="text-xl font-bold">AI Model Configuration</h2>
-
-          {/* Provider Selection */}
-          <div>
-            <label className="block text-sm font-bold mb-2">Provider *</label>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              {Object.keys(PROVIDER_MODELS).map(p => (
-                <button
-                  key={p}
-                  onClick={() => handleProviderChange(p)}
-                  className={`p-3 rounded border-2 font-medium text-center transition ${
-                    provider === p
-                      ? 'border-blue-600 bg-blue-50 text-blue-600'
-                      : 'border-gray-300 hover:border-gray-400'
-                  }`}
-                >
-                  {p.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Model Selection */}
-          <div>
-            <label className="block text-sm font-bold mb-2">Model *</label>
-            {provider === 'ollama' && loadingModels ? (
-              <div className="px-3 py-2 border border-gray-300 rounded-lg text-gray-600">
-                Loading Ollama models...
-              </div>
-            ) : availableModels.length === 0 && provider === 'ollama' ? (
-              <div className="px-3 py-2 border border-orange-300 bg-orange-50 rounded-lg text-orange-700">
-                ⚠️ No Ollama models found. Make sure Ollama is running and has models installed.
-              </div>
-            ) : (
-              <select
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              >
-                {availableModels.map(m => (
-                  <option key={m} value={m}>{m}</option>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bot className="h-5 w-5 text-primary" />
+              AI Model Configuration
+            </CardTitle>
+            <CardDescription>Configure routing, runtime behavior, and generation defaults.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div>
+              <p className="mb-2 text-sm font-medium">Provider</p>
+              <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                {Object.keys(PROVIDER_MODELS).map((p) => (
+                  <Button
+                    key={p}
+                    variant={provider === p ? 'default' : 'outline'}
+                    onClick={() => handleProviderChange(p)}
+                  >
+                    {p.toUpperCase()}
+                  </Button>
                 ))}
-              </select>
-            )}
-          </div>
+              </div>
+            </div>
 
-          {/* System Prompt */}
-          <div>
-            <label className="block text-sm font-bold mb-2">System Prompt</label>
-            <textarea
-              value={systemPrompt}
-              onChange={(e) => setSystemPrompt(e.target.value)}
-              rows={4}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              placeholder="Custom system instructions for the AI..."
-            />
-          </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">Model</p>
+              {provider === 'ollama' && loadingModels ? (
+                <p className="text-sm text-muted-foreground">Loading Ollama models...</p>
+              ) : availableModels.length === 0 && provider === 'ollama' ? (
+                <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-700">
+                  No Ollama models found.
+                </p>
+              ) : (
+                <Select value={model} onChange={(e) => setModel(e.target.value)}>
+                  {availableModels.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </Select>
+              )}
+            </div>
 
-          {/* Temperature */}
-          <div>
-            <label className="block text-sm font-bold mb-2">Temperature: {temperature.toFixed(1)}</label>
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="0.1"
-              value={temperature}
-              onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-full"
-            />
-            <p className="text-xs text-gray-600 mt-1">0 = deterministic, 2 = creative</p>
-          </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">System Prompt</p>
+              <Textarea
+                rows={4}
+                value={systemPrompt}
+                onChange={(e) => setSystemPrompt(e.target.value)}
+                placeholder="Custom system instructions for the AI..."
+              />
+            </div>
 
-          {/* Max Tokens */}
-          <div>
-            <label className="block text-sm font-bold mb-2">Max Tokens</label>
-            <input
-              type="number"
-              value={maxTokens}
-              onChange={(e) => setMaxTokens(parseInt(e.target.value))}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              min="100"
-              max="4096"
-            />
-          </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <p className="mb-2 text-sm font-medium">Temperature: {temperature.toFixed(1)}</p>
+                <Input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={temperature}
+                  onChange={(e) => setTemperature(parseFloat(e.target.value))}
+                />
+              </div>
+              <div>
+                <p className="mb-2 text-sm font-medium">Max Tokens</p>
+                <Input
+                  type="number"
+                  min="100"
+                  max="4096"
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(parseInt(e.target.value || '0', 10))}
+                />
+              </div>
+            </div>
 
-          {/* Feature Toggles */}
-          <div className="border-t pt-4">
-            <h3 className="font-bold mb-3">Feature Toggles</h3>
-            <div className="space-y-3">
+            <div className="grid gap-3 rounded-xl border border-border/70 p-4 sm:grid-cols-2">
               {[
-                { key: 'streamingEnabled', label: 'Streaming Responses', value: streamingEnabled, setter: setStreamingEnabled },
-                { key: 'toolCalling', label: 'Tool/Function Calling', value: toolCalling, setter: setToolCalling },
-                { key: 'memoryEnabled', label: 'Memory (Conversation History)', value: memoryEnabled, setter: setMemoryEnabled },
-                { key: 'knowledgeEnabled', label: 'Knowledge Base Integration', value: knowledgeEnabled, setter: setKnowledgeEnabled },
-              ].map(({key, label, value, setter}) => (
-                <label key={key} className="flex items-center gap-3 cursor-pointer">
+                ['Streaming Responses', streamingEnabled, setStreamingEnabled],
+                ['Tool/Function Calling', toolCalling, setToolCalling],
+                ['Memory Integration', memoryEnabled, setMemoryEnabled],
+                ['Knowledge Integration', knowledgeEnabled, setKnowledgeEnabled],
+              ].map(([label, value, setter], idx) => (
+                <label key={idx} className="flex items-center justify-between rounded-lg border border-border/60 p-3 text-sm">
+                  <span>{label as string}</span>
                   <input
                     type="checkbox"
-                    checked={value}
-                    onChange={(e) => setter(e.target.checked)}
-                    className="w-4 h-4"
+                    checked={value as boolean}
+                    onChange={(e) => (setter as (v: boolean) => void)(e.target.checked)}
+                    className="h-4 w-4"
                   />
-                  <span>{label}</span>
                 </label>
               ))}
             </div>
-          </div>
 
-          {/* Default Config */}
-          <label className="flex items-center gap-3 cursor-pointer p-3 border rounded-lg">
-            <input
-              type="checkbox"
-              checked={isDefault}
-              onChange={(e) => setIsDefault(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span>Set as default AI configuration</span>
-          </label>
+            <label className="flex items-center justify-between rounded-lg border border-border/60 p-3 text-sm">
+              <span>Set as default AI configuration</span>
+              <input
+                type="checkbox"
+                checked={isDefault}
+                onChange={(e) => setIsDefault(e.target.checked)}
+                className="h-4 w-4"
+              />
+            </label>
 
-          <button
-            onClick={handleSaveAIConfig}
-            disabled={loading}
-            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
-          >
-            {loading ? 'Saving...' : 'Save AI Configuration'}
-          </button>
-        </div>
+            <Button onClick={handleSaveAIConfig} disabled={loading} className="w-full">
+              {loading ? 'Saving...' : 'Save AI Configuration'}
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Provider Setup Tab */}
       {activeTab === 'providers' && (
-        <div className="bg-white p-6 rounded-lg shadow space-y-6">
-          <h2 className="text-xl font-bold">Provider API Configuration</h2>
-
-          {['openai', 'anthropic', 'gemini', 'grok', 'ollama'].map(providerName => {
-            const colors: {[key: string]: string} = {
-              openai: 'blue', anthropic: 'red', gemini: 'yellow', grok: 'purple', ollama: 'green'
-            }
-            const color = colors[providerName] || 'gray'
-            return (
-              <div key={providerName} className={`border-l-4 border-${color}-500 p-4 bg-${color}-50 rounded`}>
-                <h3 className="font-bold mb-3">{providerName.toUpperCase()}</h3>
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              Provider API Configuration
+            </CardTitle>
+            <CardDescription>Store keys and endpoints for each inference provider.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {['openai', 'anthropic', 'gemini', 'grok', 'ollama'].map((providerName) => (
+              <div key={providerName} className="rounded-xl border border-border/70 p-4">
+                <p className="mb-2 text-sm font-semibold">{providerName.toUpperCase()}</p>
                 {providerName === 'openai' && (
-                  <>
-                    <input
+                  <div className="space-y-2">
+                    <Input
                       type="password"
                       placeholder="API Key (sk-...)"
                       value={providerConfigs.openai?.apiKey || ''}
-                      onChange={(e) => setProviderConfigs({
-                        ...providerConfigs,
-                        openai: {...(providerConfigs.openai || {}), apiKey: e.target.value}
-                      })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-2"
+                      onChange={(e) =>
+                        setProviderConfigs({
+                          ...providerConfigs,
+                          openai: { ...(providerConfigs.openai || {}), apiKey: e.target.value },
+                        })
+                      }
                     />
-                    <input
-                      type="text"
+                    <Input
                       placeholder="Organization ID (optional)"
                       value={providerConfigs.openai?.orgId || ''}
-                      onChange={(e) => setProviderConfigs({
-                        ...providerConfigs,
-                        openai: {...(providerConfigs.openai || {}), orgId: e.target.value}
-                      })}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                      onChange={(e) =>
+                        setProviderConfigs({
+                          ...providerConfigs,
+                          openai: { ...(providerConfigs.openai || {}), orgId: e.target.value },
+                        })
+                      }
                     />
-                  </>
+                  </div>
                 )}
                 {providerName === 'anthropic' && (
-                  <input
+                  <Input
                     type="password"
                     placeholder="API Key"
                     value={providerConfigs.anthropic?.apiKey || ''}
-                    onChange={(e) => setProviderConfigs({
-                      ...providerConfigs,
-                      anthropic: {...(providerConfigs.anthropic || {}), apiKey: e.target.value}
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    onChange={(e) =>
+                      setProviderConfigs({
+                        ...providerConfigs,
+                        anthropic: { ...(providerConfigs.anthropic || {}), apiKey: e.target.value },
+                      })
+                    }
                   />
                 )}
                 {providerName === 'gemini' && (
-                  <input
+                  <Input
                     type="password"
                     placeholder="API Key"
                     value={providerConfigs.gemini?.apiKey || ''}
-                    onChange={(e) => setProviderConfigs({
-                      ...providerConfigs,
-                      gemini: {...(providerConfigs.gemini || {}), apiKey: e.target.value}
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    onChange={(e) =>
+                      setProviderConfigs({
+                        ...providerConfigs,
+                        gemini: { ...(providerConfigs.gemini || {}), apiKey: e.target.value },
+                      })
+                    }
                   />
                 )}
                 {providerName === 'grok' && (
-                  <input
+                  <Input
                     type="password"
                     placeholder="API Key"
                     value={providerConfigs.grok?.apiKey || ''}
-                    onChange={(e) => setProviderConfigs({
-                      ...providerConfigs,
-                      grok: {...(providerConfigs.grok || {}), apiKey: e.target.value}
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    onChange={(e) =>
+                      setProviderConfigs({
+                        ...providerConfigs,
+                        grok: { ...(providerConfigs.grok || {}), apiKey: e.target.value },
+                      })
+                    }
                   />
                 )}
                 {providerName === 'ollama' && (
-                  <input
-                    type="text"
-                    placeholder="Base URL (default: http://localhost:11434)"
+                  <Input
+                    placeholder="Base URL"
                     value={providerConfigs.ollama?.baseUrl || ''}
-                    onChange={(e) => setProviderConfigs({
-                      ...providerConfigs,
-                      ollama: {...(providerConfigs.ollama || {}), baseUrl: e.target.value}
-                    })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    onChange={(e) =>
+                      setProviderConfigs({
+                        ...providerConfigs,
+                        ollama: { ...(providerConfigs.ollama || {}), baseUrl: e.target.value },
+                      })
+                    }
                   />
                 )}
               </div>
-            )
-          })}
+            ))}
 
-          <button
-            onClick={handleSaveProviderConfig}
-            disabled={loading}
-            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
-          >
-            {loading ? 'Saving...' : 'Save Provider Configuration'}
-          </button>
-        </div>
+            <Button onClick={handleSaveProviderConfig} disabled={loading} className="w-full">
+              {loading ? 'Saving...' : 'Save Provider Configuration'}
+            </Button>
+          </CardContent>
+        </Card>
       )}
 
-      {/* White Label Tab */}
       {activeTab === 'white-label' && (
-        <div className="bg-white p-6 rounded-lg shadow space-y-6">
-          <h2 className="text-xl font-bold">White Label Settings</h2>
-
-          <div>
-            <label className="block text-sm font-bold mb-2">Brand Name (Currently: {brandName})</label>
-            <input
-              type="text"
-              value={brandName}
-              onChange={(e) => setBrandName(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              placeholder="e.g., MyAI, Acme Corp AI"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-bold mb-2">Primary Brand Color</label>
-            <div className="flex gap-4">
-              <input
-                type="color"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                className="w-16 h-10 border border-gray-300 rounded cursor-pointer"
-              />
-              <input
-                type="text"
-                value={brandColor}
-                onChange={(e) => setBrandColor(e.target.value)}
-                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg font-mono"
-                placeholder="#3B82F6"
-              />
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Palette className="h-5 w-5 text-primary" />
+              White Label Settings
+            </CardTitle>
+            <CardDescription>Customize brand identity for admin and end-user experiences.</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <p className="mb-2 text-sm font-medium">Brand Name</p>
+              <Input value={brandName} onChange={(e) => setBrandName(e.target.value)} placeholder="e.g., Acme AI" />
             </div>
-          </div>
 
-          <div>
-            <label className="block text-sm font-bold mb-2">Logo URL</label>
-            <input
-              type="text"
-              value={logoUrl}
-              onChange={(e) => setLogoUrl(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-              placeholder="https://example.com/logo.png"
-            />
-            {logoUrl && <img src={logoUrl} alt="Logo preview" className="mt-4 max-w-xs h-auto" />}
-          </div>
-
-          <div className="p-4 bg-gray-50 rounded border border-gray-300">
-            <h3 className="font-bold mb-2">Preview</h3>
-            <div style={{borderColor: brandColor}} className="border-b-4 p-4 bg-white rounded">
-              <h1 style={{color: brandColor}} className="text-2xl font-bold">{brandName}</h1>
-              <p className="text-gray-600">Your branded AI assistant</p>
+            <div>
+              <p className="mb-2 text-sm font-medium">Primary Brand Color</p>
+              <div className="flex gap-3">
+                <Input type="color" value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="w-20 p-1" />
+                <Input value={brandColor} onChange={(e) => setBrandColor(e.target.value)} className="font-mono" />
+              </div>
             </div>
-          </div>
 
-          <button
-            onClick={handleSaveWhiteLabel}
-            disabled={loading}
-            className="w-full bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 font-medium transition"
-          >
-            {loading ? 'Saving...' : 'Save White Label Settings'}
-          </button>
-        </div>
+            <div>
+              <p className="mb-2 text-sm font-medium">Logo URL</p>
+              <Input value={logoUrl} onChange={(e) => setLogoUrl(e.target.value)} placeholder="https://example.com/logo.png" />
+            </div>
+
+            <div className="rounded-xl border border-border/70 bg-secondary/30 p-4">
+              <p className="mb-2 text-sm font-medium">Preview</p>
+              <div className="rounded-lg border-b-4 bg-background p-4" style={{ borderColor: brandColor }}>
+                <p className="text-xl font-semibold" style={{ color: brandColor }}>{brandName}</p>
+                <p className="text-sm text-muted-foreground">Your branded AI assistant</p>
+              </div>
+              <Badge variant="outline" className="mt-3">
+                <RefreshCcw className="mr-1 h-3.5 w-3.5" />
+                Updates apply after refresh
+              </Badge>
+            </div>
+
+            <Button onClick={handleSaveWhiteLabel} disabled={loading} className="w-full">
+              {loading ? 'Saving...' : 'Save White Label Settings'}
+            </Button>
+          </CardContent>
+        </Card>
       )}
     </div>
   )
