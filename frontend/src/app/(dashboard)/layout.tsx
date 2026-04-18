@@ -13,8 +13,10 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Moon,
   Settings,
   ShieldCheck,
+  Sun,
   Wrench,
   Users,
   MessageSquareText,
@@ -25,6 +27,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
+import { useTheme } from 'next-themes'
 
 type NavItem = {
   name: string
@@ -53,9 +56,15 @@ function DashboardLayoutContent({
 }) {
   const pathname = usePathname()
   const router = useRouter()
+  const { theme, setTheme } = useTheme()
   const [user, setUser] = useState<{ email?: string } | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [mounted, setMounted] = useState(false)
   const { whiteLabelSettings } = useSettings()
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('access_token')
@@ -207,17 +216,31 @@ function DashboardLayoutContent({
                 <h1 className="font-display text-lg font-semibold sm:text-xl">{activeItem.hint}</h1>
               </div>
             </div>
-            <div className="hidden items-center gap-2 sm:flex">
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+                aria-label="Toggle theme"
+              >
+                {mounted && theme === 'dark' ? (
+                  <Sun className="h-4 w-4" />
+                ) : (
+                  <Moon className="h-4 w-4" />
+                )}
+              </Button>
+              <div className="hidden items-center gap-2 sm:flex">
               <Badge variant="success">Live</Badge>
               <Badge variant="secondary">
                 <Database className="mr-1 h-3.5 w-3.5" />
                 Backend Connected
               </Badge>
+              </div>
             </div>
           </div>
         </header>
 
-        <section className="p-4 sm:p-6">{children}</section>
+        <section className="animate-rise-in p-4 sm:p-6">{children}</section>
       </main>
     </div>
   )

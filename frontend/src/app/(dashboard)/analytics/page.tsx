@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { Activity, Bot, DollarSign, Sparkles, Wrench } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 interface Model {
   model: string
@@ -184,26 +185,26 @@ export default function AnalyticsPage() {
             <p className="text-sm text-muted-foreground">Loading observability logs...</p>
           ) : logs.length > 0 ? (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">Timestamp</th>
-                    <th className="py-2 pr-4 font-medium">Model</th>
-                    <th className="py-2 pr-4 font-medium">Tool</th>
-                    <th className="py-2 font-medium">Cost</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table className="min-w-full">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pr-4">Timestamp</TableHead>
+                    <TableHead className="pr-4">Model</TableHead>
+                    <TableHead className="pr-4">Tool</TableHead>
+                    <TableHead>Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {logs.map((log, idx) => (
-                    <tr key={idx} className="border-b border-border/60">
-                      <td className="py-3 pr-4">{new Date(log.created_at).toLocaleString()}</td>
-                      <td className="py-3 pr-4">{log.model_selected || '-'}</td>
-                      <td className="py-3 pr-4">{log.tool_selected || '-'}</td>
-                      <td className="py-3">${(log.cost_usd || 0).toFixed(4)}</td>
-                    </tr>
+                    <TableRow key={idx}>
+                      <TableCell className="py-3 pr-4">{new Date(log.created_at).toLocaleString()}</TableCell>
+                      <TableCell className="py-3 pr-4">{log.model_selected || '-'}</TableCell>
+                      <TableCell className="py-3 pr-4">{log.tool_selected || '-'}</TableCell>
+                      <TableCell className="py-3">${(log.cost_usd || 0).toFixed(4)}</TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">No decision logs available.</p>

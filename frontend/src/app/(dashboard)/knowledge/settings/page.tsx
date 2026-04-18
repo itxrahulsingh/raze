@@ -7,6 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import { toast } from 'sonner'
 
 interface KnowledgeSettings {
   enable_knowledge_base: boolean
@@ -83,10 +85,11 @@ export default function KnowledgeSettingsPage() {
       })
       if (res.ok) {
         setSaved(true)
+        toast.success('Knowledge settings saved')
         setTimeout(() => setSaved(false), 3000)
       }
     } catch (e) {
-      alert('Failed to save settings: ' + String(e))
+      toast.error('Failed to save settings: ' + String(e))
     }
   }
 
@@ -160,11 +163,9 @@ export default function KnowledgeSettingsPage() {
           ].map(([key, label]) => (
             <label key={key} className="flex items-center justify-between rounded-xl border border-border/70 p-3">
               <span className="text-sm">{label}</span>
-              <input
-                type="checkbox"
+              <Switch
                 checked={settings[key as keyof KnowledgeSettings] as boolean}
-                onChange={() => toggleSetting(key as keyof KnowledgeSettings)}
-                className="h-4 w-4"
+                onCheckedChange={() => toggleSetting(key as keyof KnowledgeSettings)}
               />
             </label>
           ))}
@@ -187,11 +188,9 @@ export default function KnowledgeSettingsPage() {
           ].map(([key, label]) => (
             <label key={key} className="flex items-center justify-between rounded-xl border border-border/70 p-3">
               <span className="text-sm">{label}</span>
-              <input
-                type="checkbox"
+              <Switch
                 checked={settings[key as keyof KnowledgeSettings] as boolean}
-                onChange={() => toggleSetting(key as keyof KnowledgeSettings)}
-                className="h-4 w-4"
+                onCheckedChange={() => toggleSetting(key as keyof KnowledgeSettings)}
               />
             </label>
           ))}

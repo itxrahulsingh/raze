@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
 
 interface Message {
   id: string
@@ -301,12 +302,7 @@ export default function AdminChatPage() {
           </div>
           <CardDescription>Live streaming responses from your backend route.</CardDescription>
           <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={useKnowledge}
-              onChange={(e) => setUseKnowledge(e.target.checked)}
-              className="h-4 w-4"
-            />
+            <Switch checked={useKnowledge} onCheckedChange={setUseKnowledge} />
             <Database className="h-4 w-4 text-muted-foreground" />
             Use Knowledge Base
           </label>

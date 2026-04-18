@@ -9,6 +9,28 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 
 interface KnowledgeSource {
   id: string
@@ -127,12 +149,15 @@ export default function KnowledgePage() {
       })
       if (res.ok) {
         setShowUploadModal(false)
+        toast.success('Source uploaded successfully')
         fetchSources()
       } else {
         setError('Upload failed')
+        toast.error('Upload failed')
       }
     } catch (e) {
       setError('Upload failed: ' + String(e))
+      toast.error('Upload failed')
     } finally {
       setUploading(false)
     }
@@ -160,12 +185,15 @@ export default function KnowledgePage() {
       if (res.ok) {
         setShowArticleModal(false)
         setArticleForm({ name: '', description: '', content: '', tags: '', client_id: '' })
+        toast.success('Article created successfully')
         fetchSources()
       } else {
         setError('Failed to create article')
+        toast.error('Failed to create article')
       }
     } catch (e) {
       setError('Failed to create article: ' + String(e))
+      toast.error('Failed to create article')
     }
   }
 
@@ -183,14 +211,18 @@ export default function KnowledgePage() {
       if (res.ok) {
         setShowConversionModal(false)
         setSelectedConvId('')
+        toast.success('Conversation added to knowledge')
         fetchSources()
       } else if (res.status === 409) {
         setError('This conversation is already in the knowledge base')
+        toast.warning('This conversation is already in the knowledge base')
       } else {
         setError('Failed to convert conversation')
+        toast.error('Failed to convert conversation')
       }
     } catch (e) {
       setError('Failed to convert conversation: ' + String(e))
+      toast.error('Failed to convert conversation')
     } finally {
       setConverting(false)
     }
@@ -215,15 +247,16 @@ export default function KnowledgePage() {
         },
         body: JSON.stringify({ [field]: newValue }),
       })
-      if (res.ok) fetchSources()
+      if (res.ok) {
+        fetchSources()
+      }
     } catch (e) {
       setError('Failed to update source: ' + String(e))
+      toast.error('Failed to update source')
     }
   }
 
   const handleDelete = async (sourceId: string) => {
-    if (!confirm('Are you sure you want to delete this knowledge source?')) return
-
     const authToken = token || localStorage.getItem('access_token')
     if (!authToken) return
 
@@ -232,9 +265,13 @@ export default function KnowledgePage() {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${authToken}` },
       })
-      if (res.ok) fetchSources()
+      if (res.ok) {
+        toast.success('Knowledge source deleted')
+        fetchSources()
+      }
     } catch (e) {
       setError('Failed to delete source: ' + String(e))
+      toast.error('Failed to delete source')
     }
   }
 
@@ -246,9 +283,13 @@ export default function KnowledgePage() {
         method: 'PUT',
         headers: { Authorization: `Bearer ${authToken}` },
       })
-      if (res.ok) fetchSources()
+      if (res.ok) {
+        toast.success('Source approved')
+        fetchSources()
+      }
     } catch (e) {
       setError('Failed to approve: ' + String(e))
+      toast.error('Failed to approve source')
     }
   }
 
@@ -300,21 +341,14 @@ export default function KnowledgePage() {
         </div>
       </div>
 
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {categories.map((tab) => {
-          const label = tab.replace(/_/g, ' ')
-          return (
-            <Button
-              key={tab}
-              variant={activeTab === tab ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setActiveTab(tab)}
-            >
-              {label.charAt(0).toUpperCase() + label.slice(1)}
-            </Button>
-          )
-        })}
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0">
+          {categories.map((tab) => {
+            const label = tab.replace(/_/g, ' ')
+            return <TabsTrigger key={tab} value={tab}>{label.charAt(0).toUpperCase() + label.slice(1)}</TabsTrigger>
+          })}
+        </TabsList>
+      </Tabs>
 
       <Card>
         <CardHeader>
@@ -351,29 +385,23 @@ export default function KnowledgePage() {
                   <div className="mt-3 grid gap-2 rounded-lg border border-border/60 bg-secondary/30 p-3 sm:grid-cols-3">
                     <label className="flex items-center justify-between text-sm">
                       <span>Use in Knowledge</span>
-                      <input
-                        type="checkbox"
+                      <Switch
                         checked={source.can_use_in_knowledge}
-                        onChange={() => handleToggleUsage(source.id, 'can_use_in_knowledge')}
-                        className="h-4 w-4"
+                        onCheckedChange={() => handleToggleUsage(source.id, 'can_use_in_knowledge')}
                       />
                     </label>
                     <label className="flex items-center justify-between text-sm">
                       <span>Use in Chat</span>
-                      <input
-                        type="checkbox"
+                      <Switch
                         checked={source.can_use_in_chat}
-                        onChange={() => handleToggleUsage(source.id, 'can_use_in_chat')}
-                        className="h-4 w-4"
+                        onCheckedChange={() => handleToggleUsage(source.id, 'can_use_in_chat')}
                       />
                     </label>
                     <label className="flex items-center justify-between text-sm">
                       <span>Use in Search</span>
-                      <input
-                        type="checkbox"
+                      <Switch
                         checked={source.can_use_in_search}
-                        onChange={() => handleToggleUsage(source.id, 'can_use_in_search')}
-                        className="h-4 w-4"
+                        onCheckedChange={() => handleToggleUsage(source.id, 'can_use_in_search')}
                       />
                     </label>
                   </div>
@@ -385,10 +413,26 @@ export default function KnowledgePage() {
                         Approve
                       </Button>
                     )}
-                    <Button size="sm" variant="destructive" onClick={() => handleDelete(source.id)}>
-                      <Trash2 className="mr-1.5 h-4 w-4" />
-                      Delete
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="destructive">
+                          <Trash2 className="mr-1.5 h-4 w-4" />
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this knowledge source?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This action cannot be undone and will remove indexed chunks permanently.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => handleDelete(source.id)}>Delete Source</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 </div>
               ))}
@@ -397,122 +441,108 @@ export default function KnowledgePage() {
         </CardContent>
       </Card>
 
-      {showUploadModal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-lg">
-            <CardHeader>
-              <CardTitle>Upload {activeTab.replace(/_/g, ' ')}</CardTitle>
-              <CardDescription>Select a file to ingest into knowledge.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Input
-                type="file"
-                onChange={handleFileUpload}
-                disabled={uploading}
-                accept=".pdf,.docx,.txt,.csv,.json,.xlsx,.xls,.html"
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowUploadModal(false)}>
-                  Cancel
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <Dialog open={showUploadModal} onOpenChange={setShowUploadModal}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Upload {activeTab.replace(/_/g, ' ')}</DialogTitle>
+            <DialogDescription>Select a file to ingest into knowledge.</DialogDescription>
+          </DialogHeader>
+          <Input
+            type="file"
+            onChange={handleFileUpload}
+            disabled={uploading}
+            accept=".pdf,.docx,.txt,.csv,.json,.xlsx,.xls,.html"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowUploadModal(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {showArticleModal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-2xl">
-            <CardHeader>
-              <CardTitle>Create New Article</CardTitle>
-              <CardDescription>Author structured content for retrieval.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Input
-                placeholder="Article title"
-                value={articleForm.name}
-                onChange={(e) => setArticleForm({ ...articleForm, name: e.target.value })}
-              />
-              <Textarea
-                placeholder="Description"
-                rows={3}
-                value={articleForm.description}
-                onChange={(e) => setArticleForm({ ...articleForm, description: e.target.value })}
-              />
-              <Textarea
-                placeholder="Article content"
-                rows={8}
-                value={articleForm.content}
-                onChange={(e) => setArticleForm({ ...articleForm, content: e.target.value })}
-              />
-              <Input
-                placeholder="Tags (comma separated)"
-                value={articleForm.tags}
-                onChange={(e) => setArticleForm({ ...articleForm, tags: e.target.value })}
-              />
-              <Input
-                placeholder="Client ID (optional)"
-                value={articleForm.client_id}
-                onChange={(e) => setArticleForm({ ...articleForm, client_id: e.target.value })}
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowArticleModal(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleArticleCreate}>Create Article</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <Dialog open={showArticleModal} onOpenChange={setShowArticleModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Create New Article</DialogTitle>
+            <DialogDescription>Author structured content for retrieval.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Input
+              placeholder="Article title"
+              value={articleForm.name}
+              onChange={(e) => setArticleForm({ ...articleForm, name: e.target.value })}
+            />
+            <Textarea
+              placeholder="Description"
+              rows={3}
+              value={articleForm.description}
+              onChange={(e) => setArticleForm({ ...articleForm, description: e.target.value })}
+            />
+            <Textarea
+              placeholder="Article content"
+              rows={8}
+              value={articleForm.content}
+              onChange={(e) => setArticleForm({ ...articleForm, content: e.target.value })}
+            />
+            <Input
+              placeholder="Tags (comma separated)"
+              value={articleForm.tags}
+              onChange={(e) => setArticleForm({ ...articleForm, tags: e.target.value })}
+            />
+            <Input
+              placeholder="Client ID (optional)"
+              value={articleForm.client_id}
+              onChange={(e) => setArticleForm({ ...articleForm, client_id: e.target.value })}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowArticleModal(false)}>Cancel</Button>
+            <Button onClick={handleArticleCreate}>Create Article</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
-      {showConversionModal && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-xl">
-            <CardHeader>
-              <CardTitle>Add Conversation to Knowledge</CardTitle>
-              <CardDescription>Promote a chat session into a reusable source.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="max-h-72 space-y-2 overflow-y-auto">
-                {conversations.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No conversations available.</p>
-                ) : (
-                  conversations.map((conv) => (
-                    <button
-                      key={conv.id}
-                      onClick={() => setSelectedConvId(conv.id)}
-                      className={`w-full rounded-xl border p-3 text-left ${
-                        selectedConvId === conv.id ? 'border-primary bg-primary/5' : 'border-border/70 hover:bg-secondary/30'
-                      }`}
-                    >
-                      <p className="text-sm font-medium">{conv.title || 'Untitled'}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {conv.message_count} messages • {new Date(conv.created_at).toLocaleDateString()}
-                      </p>
-                    </button>
-                  ))
-                )}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    setShowConversionModal(false)
-                    setSelectedConvId('')
-                  }}
+      <Dialog open={showConversionModal} onOpenChange={setShowConversionModal}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Add Conversation to Knowledge</DialogTitle>
+            <DialogDescription>Promote a chat session into a reusable source.</DialogDescription>
+          </DialogHeader>
+          <div className="max-h-72 space-y-2 overflow-y-auto">
+            {conversations.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No conversations available.</p>
+            ) : (
+              conversations.map((conv) => (
+                <button
+                  key={conv.id}
+                  onClick={() => setSelectedConvId(conv.id)}
+                  className={`w-full rounded-xl border p-3 text-left ${
+                    selectedConvId === conv.id ? 'border-primary bg-primary/5' : 'border-border/70 hover:bg-secondary/30'
+                  }`}
                 >
-                  Cancel
-                </Button>
-                <Button onClick={handleConvertConversation} disabled={!selectedConvId || converting}>
-                  {converting ? 'Converting...' : 'Add to Knowledge'}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+                  <p className="text-sm font-medium">{conv.title || 'Untitled'}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {conv.message_count} messages • {new Date(conv.created_at).toLocaleDateString()}
+                  </p>
+                </button>
+              ))
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowConversionModal(false)
+                setSelectedConvId('')
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConvertConversation} disabled={!selectedConvId || converting}>
+              {converting ? 'Converting...' : 'Add to Knowledge'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

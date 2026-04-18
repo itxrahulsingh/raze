@@ -6,6 +6,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Badge } from '@/components/ui/badge'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 
 interface ChatDomain {
   id: string
@@ -52,7 +72,7 @@ export default function ChatSDKPage() {
 
   const handleRegisterDomain = async () => {
     if (!formData.domain || !formData.display_name) {
-      alert('Domain and display name are required')
+      toast.error('Domain and display name are required')
       return
     }
 
@@ -69,16 +89,19 @@ export default function ChatSDKPage() {
 
       if (res.ok) {
         const data = await res.json()
-        alert(`Domain registered.\n\nAPI Key: ${data.api_key}\n\nStore this securely.`)
+        toast.success('Domain registered successfully')
+        if (data.api_key) {
+          toast.info('API key issued. Copy and store it securely.')
+        }
         setFormData({ domain: '', display_name: '', description: '' })
         setShowNewDomain(false)
         fetchDomains()
       } else {
         const error = await res.json()
-        alert('Error: ' + error.detail)
+        toast.error(error.detail || 'Failed to register domain')
       }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     }
   }
 
@@ -89,28 +112,34 @@ export default function ChatSDKPage() {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) fetchDomains()
+      if (res.ok) {
+        toast.success('Domain approved')
+        fetchDomains()
+      }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     }
   }
 
   const handleSuspendDomain = async (domainId: string) => {
-    if (!confirm('Suspend this domain?')) return
     try {
       const token = localStorage.getItem('access_token')
       const res = await fetch(`/api/v1/chat-sdk/domains/${domainId}/suspend`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) fetchDomains()
+      if (res.ok) {
+        toast.success('Domain suspended')
+        fetchDomains()
+      }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     }
   }
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text)
+    toast.success('Copied API key')
     setCopiedKey(key)
     setTimeout(() => setCopiedKey(null), 1500)
   }
@@ -227,13 +256,27 @@ export default function ChatSDKPage() {
                         </Button>
                       )}
                       {domain.status === 'approved' && (
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => handleSuspendDomain(domain.id)}
-                        >
-                          Suspend
-                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="destructive" size="sm">
+                              Suspend
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Suspend this domain?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Chat widget traffic from this domain will be blocked until re-approved.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction onClick={() => handleSuspendDomain(domain.id)}>
+                                Suspend Domain
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       )}
                     </div>
                   </div>
@@ -244,40 +287,38 @@ export default function ChatSDKPage() {
         </CardContent>
       </Card>
 
-      {showNewDomain && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4 backdrop-blur-sm">
-          <Card className="w-full max-w-lg">
-            <CardHeader>
-              <CardTitle>Register New Domain</CardTitle>
-              <CardDescription>Create controlled SDK access for a website origin.</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Input
-                placeholder="example.com"
-                value={formData.domain}
-                onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
-              />
-              <Input
-                placeholder="Display name"
-                value={formData.display_name}
-                onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
-              />
-              <Textarea
-                placeholder="Description (optional)"
-                rows={3}
-                value={formData.description}
-                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-              />
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setShowNewDomain(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleRegisterDomain}>Register</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      )}
+      <Dialog open={showNewDomain} onOpenChange={setShowNewDomain}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Register New Domain</DialogTitle>
+            <DialogDescription>Create controlled SDK access for a website origin.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input
+              placeholder="example.com"
+              value={formData.domain}
+              onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+            />
+            <Input
+              placeholder="Display name"
+              value={formData.display_name}
+              onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+            />
+            <Textarea
+              placeholder="Description (optional)"
+              rows={3}
+              value={formData.description}
+              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNewDomain(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRegisterDomain}>Register</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

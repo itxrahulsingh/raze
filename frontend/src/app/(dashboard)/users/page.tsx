@@ -5,6 +5,7 @@ import { Plus, Users, ShieldCheck, Clock3 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 interface UserItem {
   id: string
@@ -97,45 +98,45 @@ export default function UsersPage() {
             <p className="text-sm text-muted-foreground">No users found.</p>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-muted-foreground">
-                    <th className="py-2 pr-4 font-medium">User</th>
-                    <th className="py-2 pr-4 font-medium">Role</th>
-                    <th className="py-2 pr-4 font-medium">Status</th>
-                    <th className="py-2 font-medium">Last Login</th>
-                  </tr>
-                </thead>
-                <tbody>
+              <Table className="min-w-full">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="pr-4">User</TableHead>
+                    <TableHead className="pr-4">Role</TableHead>
+                    <TableHead className="pr-4">Status</TableHead>
+                    <TableHead>Last Login</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
                   {users.map((u) => (
-                    <tr key={u.id} className="border-b border-border/60">
-                      <td className="py-3 pr-4">
+                    <TableRow key={u.id}>
+                      <TableCell className="py-3 pr-4">
                         <div className="flex items-center gap-2">
                           <div className="rounded-lg bg-secondary p-1.5">
                             <Users className="h-3.5 w-3.5 text-primary" />
                           </div>
                           <span>{u.email}</span>
                         </div>
-                      </td>
-                      <td className="py-3 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3 pr-4">
                         <Badge variant="outline">{u.role || 'user'}</Badge>
-                      </td>
-                      <td className="py-3 pr-4">
+                      </TableCell>
+                      <TableCell className="py-3 pr-4">
                         <Badge variant={u.is_active ? 'success' : 'secondary'}>
                           <ShieldCheck className="mr-1 h-3.5 w-3.5" />
                           {u.is_active ? 'Active' : 'Inactive'}
                         </Badge>
-                      </td>
-                      <td className="py-3">
+                      </TableCell>
+                      <TableCell className="py-3">
                         <span className="inline-flex items-center text-muted-foreground">
                           <Clock3 className="mr-1.5 h-3.5 w-3.5" />
                           {u.last_login ? new Date(u.last_login).toLocaleString() : 'Never'}
                         </span>
-                      </td>
-                    </tr>
+                      </TableCell>
+                    </TableRow>
                   ))}
-                </tbody>
-              </table>
+                </TableBody>
+              </Table>
             </div>
           )}
         </CardContent>

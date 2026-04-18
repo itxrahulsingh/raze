@@ -8,6 +8,9 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Select } from '@/components/ui/select'
 import { Badge } from '@/components/ui/badge'
+import { Switch } from '@/components/ui/switch'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { toast } from 'sonner'
 
 interface ProviderConfig {
   apiKey?: string
@@ -136,12 +139,13 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         setSaved(true)
+        toast.success('AI configuration saved')
         setTimeout(() => setSaved(false), 3000)
       } else {
-        alert('Failed to save configuration')
+        toast.error('Failed to save configuration')
       }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     } finally {
       setLoading(false)
     }
@@ -161,10 +165,11 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         setSaved(true)
+        toast.success('Provider configuration saved')
         setTimeout(() => setSaved(false), 3000)
       }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     } finally {
       setLoading(false)
     }
@@ -188,11 +193,12 @@ export default function SettingsPage() {
       })
       if (res.ok) {
         setSaved(true)
+        toast.success('White label settings saved')
         setTimeout(() => setSaved(false), 3000)
         await fetchWhiteLabelSettings()
       }
     } catch (e) {
-      alert('Error: ' + String(e))
+      toast.error('Error: ' + String(e))
     } finally {
       setLoading(false)
     }
@@ -214,22 +220,13 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2">
-        {[
-          { id: 'ai-config', label: 'AI Configuration' },
-          { id: 'providers', label: 'Provider Setup' },
-          { id: 'white-label', label: 'White Label' },
-        ].map((tab) => (
-          <Button
-            key={tab.id}
-            size="sm"
-            variant={activeTab === tab.id ? 'default' : 'outline'}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </Button>
-        ))}
-      </div>
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0">
+          <TabsTrigger value="ai-config">AI Configuration</TabsTrigger>
+          <TabsTrigger value="providers">Provider Setup</TabsTrigger>
+          <TabsTrigger value="white-label">White Label</TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {activeTab === 'ai-config' && (
         <Card>
@@ -318,11 +315,9 @@ export default function SettingsPage() {
               ].map(([label, value, setter], idx) => (
                 <label key={idx} className="flex items-center justify-between rounded-lg border border-border/60 p-3 text-sm">
                   <span>{label as string}</span>
-                  <input
-                    type="checkbox"
+                  <Switch
                     checked={value as boolean}
-                    onChange={(e) => (setter as (v: boolean) => void)(e.target.checked)}
-                    className="h-4 w-4"
+                    onCheckedChange={(v) => (setter as (v: boolean) => void)(v)}
                   />
                 </label>
               ))}
@@ -330,12 +325,7 @@ export default function SettingsPage() {
 
             <label className="flex items-center justify-between rounded-lg border border-border/60 p-3 text-sm">
               <span>Set as default AI configuration</span>
-              <input
-                type="checkbox"
-                checked={isDefault}
-                onChange={(e) => setIsDefault(e.target.checked)}
-                className="h-4 w-4"
-              />
+              <Switch checked={isDefault} onCheckedChange={setIsDefault} />
             </label>
 
             <Button onClick={handleSaveAIConfig} disabled={loading} className="w-full">

@@ -2,11 +2,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { ShieldCheck, Sparkles, TerminalSquare } from 'lucide-react'
+import { useTheme } from 'next-themes'
+import { Moon, ShieldCheck, Sparkles, Sun, TerminalSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -14,6 +16,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const { theme, setTheme } = useTheme()
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,11 +45,22 @@ export default function LoginPage() {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden p-4">
-      <div className="absolute inset-0 mesh-bg" />
-      <div className="absolute -left-24 top-14 h-72 w-72 rounded-full bg-teal-300/30 blur-3xl" />
-      <div className="absolute -right-20 bottom-12 h-80 w-80 rounded-full bg-amber-300/30 blur-3xl" />
+      <div className="absolute inset-0 mesh-bg dark:mesh-bg-dark" />
+      <div className="absolute -left-24 top-14 h-72 w-72 rounded-full bg-teal-300/30 blur-3xl animate-float-slower" />
+      <div className="absolute -right-20 bottom-12 h-80 w-80 rounded-full bg-amber-300/30 blur-3xl animate-float-slow" />
 
-      <Card className="relative z-10 w-full max-w-lg border-white/60 bg-white/85">
+      <Button
+        type="button"
+        variant="outline"
+        size="icon"
+        className="absolute right-4 top-4 z-20"
+        onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+        aria-label="Toggle theme"
+      >
+        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      </Button>
+
+      <Card className="relative z-10 w-full max-w-lg border-border/70 bg-card/85 animate-rise-in">
         <CardHeader className="space-y-4 pb-2">
           <div className="flex items-center justify-between">
             <Badge variant="secondary" className="rounded-full px-3 py-1">
@@ -68,7 +82,7 @@ export default function LoginPage() {
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground/90">Email</label>
+              <Label>Email</Label>
               <Input
                 type="email"
                 value={email}
@@ -78,7 +92,7 @@ export default function LoginPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium text-foreground/90">Password</label>
+              <Label>Password</Label>
               <Input
                 type="password"
                 value={password}

@@ -2,6 +2,8 @@ import type { Metadata } from 'next'
 import './globals.css'
 import { AuthProvider } from '@/lib/auth-context'
 import { TokenExpiryWarning } from '@/components/token-expiry-warning'
+import { Toaster } from '@/components/ui/sonner'
+import { ThemeProvider } from '@/components/theme-provider'
 
 export const metadata: Metadata = {
   title: 'RAZE Admin Dashboard',
@@ -14,14 +16,17 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="font-body">
-        <AuthProvider>
-          <TokenExpiryWarning />
-          <div className="min-h-screen">
-            {children}
-          </div>
-        </AuthProvider>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <AuthProvider>
+            <TokenExpiryWarning />
+            <Toaster />
+            <div className="min-h-screen">
+              {children}
+            </div>
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   )

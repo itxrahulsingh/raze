@@ -7,6 +7,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { toast } from 'sonner'
 
 interface ConversationDetail {
   id: string
@@ -108,8 +120,6 @@ export default function ConversationsPage() {
   }
 
   const deleteConversation = async (convId: string) => {
-    if (!confirm('Delete this conversation?')) return
-
     const authToken = token || localStorage.getItem('access_token')
     if (!authToken) return
 
@@ -147,14 +157,17 @@ export default function ConversationsPage() {
 
       if (res.ok) {
         setError(null)
-        alert('Conversation added to knowledge base successfully!')
+        toast.success('Conversation added to knowledge base')
       } else if (res.status === 409) {
         setError('This conversation is already in the knowledge base')
+        toast.warning('This conversation is already in the knowledge base')
       } else {
         setError('Failed to add conversation to knowledge base')
+        toast.error('Failed to add conversation to knowledge base')
       }
     } catch (e) {
       setError('Failed to add conversation to knowledge base: ' + String(e))
+      toast.error('Failed to add conversation to knowledge base')
     } finally {
       setConvertingToKnowledge(null)
     }
@@ -280,10 +293,28 @@ export default function ConversationsPage() {
                       <BookPlus className="mr-1.5 h-4 w-4" />
                       {convertingToKnowledge === selectedConvId ? 'Adding...' : 'Add to Knowledge'}
                     </Button>
-                    <Button size="sm" variant="destructive" onClick={() => deleteConversation(selectedConvId)}>
-                      <Trash2 className="mr-1.5 h-4 w-4" />
-                      Delete
-                    </Button>
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button size="sm" variant="destructive">
+                          <Trash2 className="mr-1.5 h-4 w-4" />
+                          Delete
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
+                          <AlertDialogDescription>
+                            This permanently removes the conversation and message history.
+                          </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => deleteConversation(selectedConvId)}>
+                            Delete Conversation
+                          </AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
                   </div>
                 </div>
 
