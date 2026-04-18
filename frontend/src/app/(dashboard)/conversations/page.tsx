@@ -41,6 +41,7 @@ export default function ConversationsPage() {
   const [page, setPage] = useState(1)
   const [totalConversations, setTotalConversations] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [convertingToKnowledge, setConvertingToKnowledge] = useState<string | null>(null)
 
   const itemsPerPage = 10
 
@@ -123,6 +124,31 @@ export default function ConversationsPage() {
     } catch (e) {
       console.error('Failed to delete conversation:', e)
       setError('Failed to delete conversation')
+    }
+  }
+
+  const handleAddToKnowledge = async (convId: string) => {
+    if (!token) return
+
+    setConvertingToKnowledge(convId)
+    try {
+      const res = await fetch(`/api/v1/knowledge/sources/from-conversation/${convId}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+
+      if (res.ok) {
+        setError(null)
+        alert('Conversation added to knowledge base successfully!')
+      } else if (res.status === 409) {
+        setError('This conversation is already in the knowledge base')
+      } else {
+        setError('Failed to add conversation to knowledge base')
+      }
+    } catch (e) {
+      setError('Failed to add conversation to knowledge base: ' + String(e))
+    } finally {
+      setConvertingToKnowledge(null)
     }
   }
 
@@ -231,12 +257,21 @@ export default function ConversationsPage() {
                       {new Date(currentConv.created_at).toLocaleString()}
                     </p>
                   </div>
-                  <button
-                    onClick={() => deleteConversation(selectedConvId)}
-                    className="px-3 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm"
-                  >
-                    🗑️ Delete
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleAddToKnowledge(selectedConvId)}
+                      disabled={convertingToKnowledge === selectedConvId}
+                      className="px-3 py-2 bg-blue-100 text-blue-600 rounded hover:bg-blue-200 text-sm disabled:opacity-50"
+                    >
+                      {convertingToKnowledge === selectedConvId ? '⏳ Adding...' : '📚 Add to Knowledge'}
+                    </button>
+                    <button
+                      onClick={() => deleteConversation(selectedConvId)}
+                      className="px-3 py-2 bg-red-100 text-red-600 rounded hover:bg-red-200 text-sm"
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
                 </div>
 
                 {/* Metadata Cards */}

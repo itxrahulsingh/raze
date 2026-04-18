@@ -1058,7 +1058,7 @@ async def update_source(
         updates['edited_by'] = current_user.id
         updates['edited_at'] = datetime.now(UTC)
         updates['edit_count'] = source.edit_count + 1
-        
+
         await db.execute(
             update(KnowledgeSource).where(KnowledgeSource.id == source_id).values(**updates)
         )
@@ -1066,3 +1066,123 @@ async def update_source(
 
     await db.refresh(source)
     return KnowledgeSourceResponse.model_validate(source)
+
+
+@router.post(
+    "/sources/from-conversation/{conversation_id}",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create knowledge source from conversation",
+)
+async def create_knowledge_from_conversation(
+    background_tasks: BackgroundTasks,
+    conversation_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeSourceResponse:
+    """Convert a conversation to a knowledge source (chat_session)."""
+    from app.models.conversation import Conversation, Message
+
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conversation = result.scalar_one_or_none()
+
+    if not conversation:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Conversation not found"
+        )
+
+    msg_result = await db.execute(
+        select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
+    )
+    messages = msg_result.scalars().all()
+
+    content_lines = [f"# {conversation.title or 'Untitled Conversation'}\n"]
+    content_lines.append(f"Date: {conversation.created_at.isoformat()}\n")
+    content_lines.append(f"Messages: {len(messages)}\n\n")
+
+    for msg in messages:
+        role = "User" if msg.role.value == "user" else "Assistant"
+        content_lines.append(f"**{role}**: {msg.content}\n")
+
+    full_content = "\n".join(content_lines)
+    content_hash = hashlib.sha256(full_content.encode()).hexdigest()
+
+    existing = await db.execute(
+        select(KnowledgeSource).where(KnowledgeSource.content_hash == content_hash)
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This conversation already exists in the knowledge base"
+        )
+
+    source = KnowledgeSource(
+        name=conversation.title or f"Conversation {str(conversation_id)[:8]}",
+        description=f"Conversation with {len(messages)} messages",
+        type=KnowledgeSourceType.txt.value,
+        category=KnowledgeSourceCategory.chat_session.value,
+        status=KnowledgeSourceStatus.pending.value,
+        mode=KnowledgeSourceMode.persistent.value,
+        content_hash=content_hash,
+        mime_type="text/plain",
+        src_metadata={
+            "conversation_id": str(conversation_id),
+            "message_count": len(messages),
+            "created_at": conversation.created_at.isoformat(),
+        },
+        tags=["conversation", "chat-session"],
+        is_active=True,
+        can_use_in_knowledge=True,
+        can_use_in_chat=True,
+    )
+
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+
+    background_tasks.add_task(
+        _ingest_conversation_content,
+        source_id=source.id,
+        content=full_content,
+    )
+
+    logger.info(
+        "knowledge.conversation_added",
+        conversation_id=str(conversation_id),
+        source_id=str(source.id),
+        message_count=len(messages),
+    )
+
+    return KnowledgeSourceResponse.model_validate(source)
+
+
+async def _ingest_conversation_content(
+    source_id: uuid.UUID,
+    content: str,
+) -> None:
+    """Background task to ingest conversation content into knowledge base."""
+    from app.core.knowledge_engine import KnowledgeEngine
+    from app.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        try:
+            engine = KnowledgeEngine()
+            await engine.ingest_text(
+                source_id=source_id,
+                content=content,
+                db=db,
+            )
+            logger.info("knowledge.conversation_ingested", source_id=str(source_id))
+        except Exception as e:
+            logger.error("knowledge.conversation_ingest_error", source_id=str(source_id), error=str(e))
+            result = await db.execute(
+                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+            )
+            source = result.scalar_one_or_none()
+            if source:
+                source.status = KnowledgeSourceStatus.failed.value
+                source.processing_error = str(e)
+                await db.commit()
