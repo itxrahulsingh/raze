@@ -216,15 +216,34 @@ async def get_redis_dep() -> AsyncGenerator[Redis, None]:
 
 async def connect_db() -> None:
     """
-    Called at application startup: verify the DB connection is alive
-    and that the pgvector extension is installed.
+    Called at application startup: verify the DB connection is alive,
+    create required extensions, and initialize tables if needed.
     """
     try:
         async with engine.begin() as conn:
             await conn.execute(text("SELECT 1"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         logger.info("database.connected", url=settings.database_url.split("@")[-1])
+
+        # Create all tables if they don't exist
+        from app.models import (  # noqa: F401
+            ai_config, analytics, conversation, knowledge, memory, tool, user
+        )
+
+        try:
+            async with engine.begin() as conn:
+                # Use a sync-compatible approach for table creation
+                # Ignore "already exists" errors for idempotent behavior
+                await conn.run_sync(Base.metadata.create_all)
+            logger.info("database.tables_initialized")
+        except Exception as e:
+            if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                logger.info("database.tables_already_exist", message=str(e)[:100])
+            else:
+                raise
+
     except Exception as exc:
         logger.error("database.connection_failed", error=str(exc))
         raise

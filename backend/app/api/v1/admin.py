@@ -241,7 +241,7 @@ async def delete_ai_config(
     request: Request,
     current_user: User = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Delete an AI configuration (soft delete)."""
     await deps.apply_rate_limit(request, "admin_ai_config_delete", 120, 60, current_user)
 
@@ -317,7 +317,7 @@ async def delete_memory(
     request: Request,
     current_user: User = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Delete a memory (soft delete)."""
     await deps.apply_rate_limit(request, "admin_memories_delete", 120, 60, current_user)
 
@@ -393,7 +393,7 @@ async def delete_conversation(
     request: Request,
     current_user: User = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Delete a conversation and all associated messages."""
     await deps.apply_rate_limit(
         request, "admin_conversations_delete", 120, 60, current_user

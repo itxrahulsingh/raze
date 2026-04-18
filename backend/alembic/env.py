@@ -69,11 +69,12 @@ async def run_migrations_online() -> None:
 def do_run_migrations(connection):
     context.configure(
         connection=connection,
-        target_metadata=target_metadata
+        target_metadata=target_metadata,
+        transaction_per_migration=False
     )
 
-    with context.begin_transaction():
-        context.run_migrations()
+    # Run migrations without transaction wrapper
+    context.run_migrations()
 
 
 if context.is_offline_mode():

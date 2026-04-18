@@ -22,6 +22,6 @@ RUN chown -R raze:raze /app
 
 USER raze
 
-# Migrations run via entrypoint; uvicorn starts the API
-# In production, run migrations as a separate init step before scaling replicas.
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --proxy-headers --forwarded-allow-ips='*'"]
+# Database tables are created automatically during app startup via ORM metadata.create_all()
+# uvicorn starts the API (using 1 worker initially to avoid race conditions during table creation)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]

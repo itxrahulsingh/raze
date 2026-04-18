@@ -11,7 +11,6 @@ import structlog
 from app.config import get_settings
 from app.database import connect_db, disconnect_db, connect_redis, disconnect_redis
 from app.api.v1 import auth, chat, knowledge, memory, tools, admin, analytics, sdk
-from app.core.observability import TraceIDMiddleware, MetricsMiddleware, ErrorTrackingMiddleware
 
 settings = get_settings()
 
@@ -84,9 +83,6 @@ app = FastAPI(
 )
 
 # Add middlewares (order matters: innermost added first)
-app.add_middleware(ErrorTrackingMiddleware)
-app.add_middleware(MetricsMiddleware)
-app.add_middleware(TraceIDMiddleware)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(
     CORSMiddleware,
