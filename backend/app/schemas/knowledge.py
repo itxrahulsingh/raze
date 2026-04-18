@@ -40,6 +40,8 @@ class KnowledgeSourceCreate(BaseModel):
     )
     tags: list[str] = Field(default_factory=list, max_length=20)
     src_metadata: dict[str, Any] = Field(default_factory=dict)
+    category: str = Field(default="document", description="Knowledge source category")
+    client_id: str | None = Field(default=None, description="Associated client ID")
     # Processing hints
     embedding_model: str | None = Field(
         default=None,
@@ -94,7 +96,16 @@ class KnowledgeSourceResponse(BaseModel):
     rejection_reason: str | None
     tags: list[str]
     src_metadata: dict[str, Any] | None
+    category: str
+    source_name: str | None
+    client_id: str | None
     is_active: bool
+    can_use_in_knowledge: bool
+    can_use_in_chat: bool
+    can_use_in_search: bool
+    edited_by: uuid.UUID | None
+    edited_at: datetime | None
+    edit_count: int
     created_at: datetime
     updated_at: datetime
 

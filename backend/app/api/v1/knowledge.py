@@ -49,6 +49,7 @@ from app.models.knowledge import (
     KnowledgeSourceMode,
     KnowledgeSourceStatus,
     KnowledgeSourceType,
+    KnowledgeSourceCategory,
 )
 from app.models.knowledge_version import KnowledgeChunkVersion
 from app.models.user import User
@@ -293,6 +294,8 @@ async def create_knowledge_source(
     source_type: KnowledgeSourceType = Form(default=KnowledgeSourceType.txt),
     url: str | None = Form(default=None),
     tags: str = Form(default=""),
+    category: str = Form(default=KnowledgeSourceCategory.document.value),
+    client_id: str | None = Form(default=None),
     auto_approve: bool = Form(default=False),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -374,9 +377,14 @@ async def create_knowledge_source(
         mime_type=mime_type,
         content_hash=content_hash,
         tags=parsed_tags,
+        category=category,
+        client_id=client_id,
         approved_by=approved_by,
         approved_at=approved_at,
         is_active=True,
+        can_use_in_knowledge=True,
+        can_use_in_chat=True,
+        can_use_in_search=True,
     )
     db.add(source)
     await db.commit()
@@ -408,6 +416,7 @@ async def list_sources(
     page_size: int = Query(default=20, ge=1, le=100),
     status_filter: KnowledgeSourceStatus | None = Query(default=None, alias="status"),
     source_type: KnowledgeSourceType | None = Query(default=None, alias="type"),
+    category: str | None = Query(default=None),
     tag: str | None = Query(default=None, max_length=50),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -419,6 +428,8 @@ async def list_sources(
         q = q.where(KnowledgeSource.status == status_filter.value)
     if source_type:
         q = q.where(KnowledgeSource.type == source_type.value)
+    if category:
+        q = q.where(KnowledgeSource.category == category)
     if tag:
         q = q.where(KnowledgeSource.tags.contains([tag]))
 
@@ -972,3 +983,85 @@ async def rollback_chunk_version(
         "new_version": new_version_num,
         "reason": reason,
     }
+
+
+# ─── POST /knowledge/articles ────────────────────────────────────────────────
+
+@router.post(
+    "/articles",
+    response_model=KnowledgeSourceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create an article",
+)
+async def create_article(
+    body: KnowledgeSourceCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeSourceResponse:
+    """Create a knowledge article (text-based)."""
+    source = KnowledgeSource(
+        name=body.name,
+        description=body.description,
+        type=KnowledgeSourceType.manual.value,
+        category=KnowledgeSourceCategory.article.value,
+        status=KnowledgeSourceStatus.approved.value,
+        mode=KnowledgeSourceMode.persistent.value,
+        tags=body.tags or [],
+        client_id=body.client_id,
+        is_active=True,
+        can_use_in_knowledge=True,
+        can_use_in_chat=True,
+        can_use_in_search=True,
+        approved_by=current_user.id,
+        approved_at=datetime.now(UTC),
+    )
+    db.add(source)
+    await db.commit()
+    await db.refresh(source)
+    return KnowledgeSourceResponse.model_validate(source)
+
+
+# ─── PUT /knowledge/sources/{id} ─────────────────────────────────────────────
+
+@router.put(
+    "/sources/{source_id}",
+    response_model=KnowledgeSourceResponse,
+    summary="Update source usage controls",
+)
+async def update_source(
+    source_id: uuid.UUID,
+    can_use_in_knowledge: bool | None = None,
+    can_use_in_chat: bool | None = None,
+    can_use_in_search: bool | None = None,
+    is_active: bool | None = None,
+    current_user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> KnowledgeSourceResponse:
+    """Update source usage controls (admin only)."""
+    result = await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+
+    updates = {}
+    if can_use_in_knowledge is not None:
+        updates['can_use_in_knowledge'] = can_use_in_knowledge
+    if can_use_in_chat is not None:
+        updates['can_use_in_chat'] = can_use_in_chat
+    if can_use_in_search is not None:
+        updates['can_use_in_search'] = can_use_in_search
+    if is_active is not None:
+        updates['is_active'] = is_active
+
+    if updates:
+        updates['edited_by'] = current_user.id
+        updates['edited_at'] = datetime.now(UTC)
+        updates['edit_count'] = source.edit_count + 1
+        
+        await db.execute(
+            update(KnowledgeSource).where(KnowledgeSource.id == source_id).values(**updates)
+        )
+        await db.commit()
+
+    await db.refresh(source)
+    return KnowledgeSourceResponse.model_validate(source)

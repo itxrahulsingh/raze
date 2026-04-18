@@ -44,6 +44,17 @@ class KnowledgeSourceType(str, Enum):
     csv = "csv"
     html = "html"
     json = "json"
+    xlsx = "xlsx"
+    xls = "xls"
+
+
+class KnowledgeSourceCategory(str, Enum):
+    document = "document"
+    article = "article"
+    chat_session = "chat_session"
+    client_document = "client_document"
+    training_material = "training_material"
+    reference = "reference"
 
 
 class KnowledgeSourceStatus(str, Enum):
@@ -124,7 +135,31 @@ class KnowledgeSource(Base):
     src_metadata: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB, nullable=True, default=dict
     )
+    category: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=KnowledgeSourceCategory.document.value,
+        index=True,
+    )
+    source_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    client_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+
+    # Usage control flags
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_use_in_knowledge: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_use_in_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    can_use_in_search: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Edit tracking
+    edited_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    edited_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    edit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     # ── Relationships ──────────────────────────────────────────────────────────
     chunks: Mapped[list["KnowledgeChunk"]] = relationship(
@@ -138,6 +173,8 @@ class KnowledgeSource(Base):
     __table_args__ = (
         Index("ix_knowledge_sources_status_type", "status", "type"),
         Index("ix_knowledge_sources_active_status", "is_active", "status"),
+        Index("ix_knowledge_sources_category", "category"),
+        Index("ix_knowledge_sources_client_id", "client_id"),
         # GIN index for fast tag array containment queries
         Index(
             "ix_knowledge_sources_tags_gin",
