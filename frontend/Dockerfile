@@ -16,6 +16,7 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS=--max-old-space-size=2048
 
 # Ensure /app/public exists so runner COPY doesn't fail when folder is absent
 RUN mkdir -p /app/public
