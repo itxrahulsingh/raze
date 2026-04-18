@@ -1,13 +1,15 @@
 """Chat SDK and Embeddable Chat API."""
 import hashlib
+import json
 import secrets
 import time
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, AsyncGenerator
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +17,9 @@ from app.database import get_db
 from app.models.chat_domain import ChatDomain, DomainStatus
 from app.models.user import User
 from app.api.v1 import deps
+from app.models.conversation import Message, MessageRole
+from app.schemas.chat import StreamChunk, StreamEventType
+from app.database import AsyncSessionLocal
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat-sdk", tags=["Chat SDK"])
@@ -280,3 +285,145 @@ async def chat_with_knowledge(
         "sources": [],
         "timestamp": datetime.now(UTC).isoformat(),
     }
+
+
+def _sse_line(chunk: StreamChunk) -> str:
+    """Format SSE line."""
+    return f"data: {chunk.model_dump_json()}\n\n"
+
+
+@router.post("/chat/stream")
+async def stream_chat_with_knowledge(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    message: str = None,
+    knowledge_ids: list[str] = None,
+    x_api_key: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Streaming chat endpoint for SDK embedding (requires valid API key)."""
+    from app.core.chat_engine import ChatEngine
+    from app.database import get_redis
+
+    if not x_api_key or not message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="API key and message required",
+        )
+
+    # Hash and verify API key
+    api_key_hash = _hash_api_key(x_api_key)
+    result = await db.execute(
+        select(ChatDomain).where(ChatDomain.api_key == api_key_hash)
+    )
+    domain = result.scalar_one_or_none()
+
+    if not domain or not domain.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API key",
+        )
+
+    if domain.status != DomainStatus.approved.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Domain not approved for chat",
+        )
+
+    # Update last used
+    domain.last_used = datetime.now(UTC)
+    await db.commit()
+
+    logger.info(
+        "chat_sdk.stream_started",
+        domain=domain.domain,
+        knowledge_ids=knowledge_ids,
+    )
+
+    msg_id = uuid.uuid4()
+    conv_id = uuid.uuid4()
+    start_ts = time.monotonic()
+
+    async def event_generator() -> AsyncGenerator[str, None]:
+        # Start event
+        yield _sse_line(
+            StreamChunk(
+                event=StreamEventType.start,
+                conversation_id=conv_id,
+                message_id=msg_id,
+            )
+        )
+
+        collected_text: list[str] = []
+        tokens_used = 0
+        cost_usd = 0.0
+        model_used = "unknown"
+        provider_used = "unknown"
+        prompt_tokens = 0
+        completion_tokens = 0
+
+        try:
+            redis_client = get_redis()
+            engine = ChatEngine(db=db, redis=redis_client)
+            session_id = f"sdk_{domain.id}"
+
+            async for delta in engine.stream(
+                message=message,
+                conversation_id=conv_id,
+                session_id=session_id,
+                user_id=None,
+                ai_config_id=None,
+                use_knowledge=bool(knowledge_ids),
+                use_memory=False,
+                tools_enabled=False,
+                allowed_tools=None,
+                context={"domain": domain.domain, "knowledge_ids": knowledge_ids or []},
+            ):
+                if delta.get("type") == "text":
+                    text_chunk = delta["content"]
+                    collected_text.append(text_chunk)
+                    yield _sse_line(
+                        StreamChunk(event=StreamEventType.delta, text=text_chunk)
+                    )
+                elif delta.get("type") == "meta":
+                    tokens_used = delta.get("tokens_used", 0)
+                    cost_usd = delta.get("cost_usd", 0.0)
+                    model_used = delta.get("model_used", model_used)
+                    provider_used = delta.get("provider_used", provider_used)
+                    prompt_tokens = delta.get("prompt_tokens", 0)
+                    completion_tokens = delta.get("completion_tokens", 0)
+        except Exception as exc:
+            logger.error("chat_sdk.stream_error", error=str(exc), domain=domain.domain)
+            error_msg = f"Error: {str(exc)[:100]}"
+            collected_text.append(error_msg)
+            yield _sse_line(StreamChunk(event=StreamEventType.delta, text=error_msg))
+
+        latency_ms = int((time.monotonic() - start_ts) * 1000)
+
+        yield _sse_line(
+            StreamChunk(
+                event=StreamEventType.done,
+                message_id=msg_id,
+                conversation_id=conv_id,
+                tokens_used=tokens_used,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+            )
+        )
+
+        logger.info(
+            "chat_sdk.stream_complete",
+            domain=domain.domain,
+            tokens=tokens_used,
+            latency_ms=latency_ms,
+        )
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
