@@ -22,6 +22,7 @@ from app.models.knowledge import (
     KnowledgeSourceType,
 )
 from app.models.memory import Memory, MemoryRetentionPolicy, MemoryType
+from app.models.system import AuditLog, SystemConfig
 from app.models.tool import Tool, ToolExecution, ToolExecutionStatus, ToolType
 from app.models.user import APIKey, User, UserRole
 
@@ -54,6 +55,9 @@ __all__ = [
     "AIConfig",
     "LLMProvider",
     "RoutingStrategy",
+    # System
+    "SystemConfig",
+    "AuditLog",
     # Analytics
     "ObservabilityLog",
     "UsageMetrics",
