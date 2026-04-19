@@ -23,6 +23,7 @@ from qdrant_client.models import (
     Distance,
     FieldCondition,
     Filter,
+    MatchAny,
     MatchValue,
     PointStruct,
     ScoredPoint,
@@ -67,10 +68,12 @@ def _build_qdrant_filter(filters: dict[str, Any] | None) -> Filter | None:
     must_conditions: list[FieldCondition] = []
     for key, value in filters.items():
         if isinstance(value, list):
-            for v in value:
-                must_conditions.append(
-                    FieldCondition(key=key, match=MatchValue(value=v))
-                )
+            list_values = [v for v in value if v is not None]
+            if not list_values:
+                continue
+            must_conditions.append(
+                FieldCondition(key=key, match=MatchAny(any=list_values))
+            )
         else:
             must_conditions.append(
                 FieldCondition(key=key, match=MatchValue(value=value))
@@ -270,7 +273,7 @@ class VectorSearchEngine:
             text_filter_conditions.extend(qdrant_filter.must)
 
         # Add keyword match on the "content" payload field
-        words = query_text.split()[:10]  # limit to first 10 words for speed
+        words = [word.strip() for word in query_text.split() if len(word.strip()) >= 3][:8]
         keyword_conditions = []
         for word in words:
             keyword_conditions.append(
@@ -280,9 +283,14 @@ class VectorSearchEngine:
                 )
             )
 
-        keyword_filter = Filter(
-            must=text_filter_conditions + keyword_conditions
-        ) if keyword_conditions else qdrant_filter
+        keyword_filter = (
+            Filter(
+                must=text_filter_conditions,
+                should=keyword_conditions,
+            )
+            if keyword_conditions
+            else qdrant_filter
+        )
 
         keyword_task = client.scroll(
             collection_name=collection,

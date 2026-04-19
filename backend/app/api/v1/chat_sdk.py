@@ -194,6 +194,71 @@ async def suspend_domain(
     return {"status": "suspended", "domain": domain.domain}
 
 
+@router.post("/domains/{domain_id}/regenerate-key")
+async def regenerate_domain_api_key(
+    domain_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Regenerate API key for a domain (admin only). Returns the new key once."""
+    await deps.apply_rate_limit(request, "regenerate_domain_key", 30, 60, current_user)
+
+    result = await db.execute(select(ChatDomain).where(ChatDomain.id == domain_id))
+    domain = result.scalar_one_or_none()
+    if not domain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Domain not found",
+        )
+
+    api_key = _generate_api_key()
+    domain.api_key = _hash_api_key(api_key)
+    domain.last_used = None
+    await db.commit()
+
+    logger.info(
+        "chat_domain.api_key_regenerated",
+        domain=domain.domain,
+        admin_id=str(current_user.id),
+    )
+
+    return {
+        "domain_id": str(domain.id),
+        "domain": domain.domain,
+        "api_key": api_key,
+        "message": "New API key generated. Store it securely; it won't be shown again.",
+    }
+
+
+@router.delete("/domains/{domain_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_domain(
+    domain_id: uuid.UUID,
+    request: Request,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Delete a chat SDK domain (admin only)."""
+    await deps.apply_rate_limit(request, "delete_domain", 30, 60, current_user)
+
+    result = await db.execute(select(ChatDomain).where(ChatDomain.id == domain_id))
+    domain = result.scalar_one_or_none()
+    if not domain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Domain not found",
+        )
+
+    await db.delete(domain)
+    await db.commit()
+
+    logger.info(
+        "chat_domain.deleted",
+        domain=domain.domain,
+        admin_id=str(current_user.id),
+    )
+
+
 @router.post("/chat")
 async def chat_with_knowledge(
     request: Request,

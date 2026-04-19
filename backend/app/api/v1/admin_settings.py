@@ -1,7 +1,10 @@
 """Admin settings and configuration endpoints."""
+import asyncio
 import httpx
+import time
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -11,6 +14,97 @@ from app.models.user import User
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/admin", tags=["Admin Settings"])
+
+
+@router.get("/system/readiness")
+async def get_system_readiness(
+    request: Request,
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Deep readiness snapshot for DB/Redis/Qdrant/Celery/Ollama."""
+    await deps.apply_rate_limit(request, "system_readiness", 60, 60, current_user)
+    settings = get_settings()
+    redis_client = get_redis()
+
+    status_map: dict[str, dict] = {}
+
+    db_start = time.monotonic()
+    try:
+        await db.execute(text("SELECT 1"))
+        status_map["database"] = {"status": "healthy", "latency_ms": int((time.monotonic() - db_start) * 1000)}
+    except Exception as e:
+        status_map["database"] = {"status": "unhealthy", "error": str(e)}
+
+    redis_start = time.monotonic()
+    try:
+        pong = await redis_client.ping()
+        status_map["redis"] = {
+            "status": "healthy" if pong else "unhealthy",
+            "latency_ms": int((time.monotonic() - redis_start) * 1000),
+        }
+    except Exception as e:
+        status_map["redis"] = {"status": "unhealthy", "error": str(e)}
+
+    qdrant_start = time.monotonic()
+    try:
+        from app.core.vector_search import VectorSearchEngine
+
+        vs = VectorSearchEngine()
+        info = await vs.get_collection_info(settings.qdrant_collection_knowledge)
+        status_map["qdrant"] = {
+            "status": "healthy",
+            "latency_ms": int((time.monotonic() - qdrant_start) * 1000),
+            "knowledge_points": int(info.get("points_count") or 0),
+            "indexed_vectors": int(info.get("indexed_vectors_count") or 0),
+        }
+    except Exception as e:
+        status_map["qdrant"] = {"status": "unhealthy", "error": str(e)}
+
+    ollama_start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=6.0) as client:
+            response = await client.get(f"{settings.ollama_base_url}/api/tags")
+            response.raise_for_status()
+            data = response.json()
+        status_map["ollama"] = {
+            "status": "healthy",
+            "latency_ms": int((time.monotonic() - ollama_start) * 1000),
+            "models_count": len(data.get("models", [])),
+        }
+    except Exception as e:
+        status_map["ollama"] = {"status": "unhealthy", "error": str(e)}
+
+    celery_status = {"status": "disabled"}
+    if settings.celery_enabled:
+        try:
+            from app.celery_app import celery_app
+
+            def _inspect_ping():
+                insp = celery_app.control.inspect(timeout=1.5)
+                return insp.ping() if insp else None
+
+            ping_result = await asyncio.to_thread(_inspect_ping)
+            if ping_result:
+                worker_count = len(ping_result.keys())
+                celery_status = {"status": "healthy", "workers": worker_count}
+            else:
+                celery_status = {"status": "degraded", "workers": 0, "detail": "No worker ping response"}
+        except Exception as e:
+            celery_status = {"status": "unhealthy", "error": str(e)}
+    status_map["celery"] = celery_status
+
+    overall = "healthy"
+    if any(component.get("status") == "unhealthy" for component in status_map.values()):
+        overall = "degraded"
+    if settings.celery_enabled and status_map["celery"].get("status") in ("degraded", "unhealthy"):
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "celery_enabled": settings.celery_enabled,
+        "components": status_map,
+    }
 
 
 @router.get("/ollama-models")
@@ -161,6 +255,33 @@ async def save_provider_config(
     )
 
     return {"status": "saved", "providers": list(config.keys())}
+
+
+@router.get("/provider-config")
+async def get_provider_config(
+    request: Request,
+    current_user: User = Depends(deps.get_current_user),
+) -> dict:
+    """Get provider API configuration from cache."""
+    await deps.apply_rate_limit(request, "get_provider_config", 120, 60, current_user)
+    redis_client = get_redis()
+    defaults = {
+        "openai": {"apiKey": "", "orgId": ""},
+        "anthropic": {"apiKey": ""},
+        "gemini": {"apiKey": ""},
+        "grok": {"apiKey": ""},
+        "ollama": {"baseUrl": get_settings().ollama_base_url},
+    }
+    try:
+        cached = await redis_client.get("provider_configs")
+        if cached:
+            import json
+            parsed = json.loads(cached)
+            if isinstance(parsed, dict):
+                return {**defaults, **parsed}
+    except Exception as e:
+        logger.warning("provider_config.get_failed", error=str(e))
+    return defaults
 
 
 @router.post("/white-label")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 import time
 import uuid
 from datetime import UTC, datetime
@@ -28,6 +29,7 @@ import structlog
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     File,
     Form,
@@ -42,7 +44,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.database import get_db
+from app.database import get_db, get_redis
 from app.models.knowledge import (
     KnowledgeChunk,
     KnowledgeSource,
@@ -78,7 +80,83 @@ _ALLOWED_MIME_TYPES = {
     "text/csv",
     "application/json",
     "text/markdown",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 }
+
+
+def _normalize_category(category: str | None) -> str:
+    """Normalize category aliases to canonical enum values."""
+    if not category:
+        return KnowledgeSourceCategory.document.value
+    lowered = category.strip().lower()
+    alias_map = {
+        "documents": KnowledgeSourceCategory.document.value,
+        "docs": KnowledgeSourceCategory.document.value,
+    }
+    normalized = alias_map.get(lowered, lowered)
+    valid = {member.value for member in KnowledgeSourceCategory}
+    return normalized if normalized in valid else KnowledgeSourceCategory.document.value
+
+
+def _is_category_enabled(knowledge_settings: dict, category: str) -> bool:
+    category_flag_map = {
+        KnowledgeSourceCategory.document.value: "enable_documents",
+        KnowledgeSourceCategory.article.value: "enable_articles",
+        KnowledgeSourceCategory.chat_session.value: "enable_chat_sessions",
+        KnowledgeSourceCategory.client_document.value: "enable_client_documents",
+        KnowledgeSourceCategory.training_material.value: "enable_training_materials",
+        KnowledgeSourceCategory.reference.value: "enable_references",
+    }
+    flag = category_flag_map.get(category)
+    if not flag:
+        return True
+    return bool(knowledge_settings.get(flag, True))
+
+
+def _infer_source_type(upload_file: UploadFile | None, provided: KnowledgeSourceType, url: str | None) -> KnowledgeSourceType:
+    if url:
+        return KnowledgeSourceType.url
+    if upload_file is None:
+        return provided
+
+    mime = (upload_file.content_type or "").lower()
+    filename = (upload_file.filename or "").lower()
+
+    if "pdf" in mime or filename.endswith(".pdf"):
+        return KnowledgeSourceType.pdf
+    if "word" in mime or filename.endswith(".docx"):
+        return KnowledgeSourceType.docx
+    if "csv" in mime or filename.endswith(".csv"):
+        return KnowledgeSourceType.csv
+    if "json" in mime or filename.endswith(".json"):
+        return KnowledgeSourceType.json
+    if "spreadsheetml" in mime or filename.endswith(".xlsx"):
+        return KnowledgeSourceType.xlsx
+    if "ms-excel" in mime or filename.endswith(".xls"):
+        return KnowledgeSourceType.xls
+    if "html" in mime or filename.endswith(".html") or filename.endswith(".htm"):
+        return KnowledgeSourceType.html
+    return KnowledgeSourceType.txt
+
+
+async def _get_knowledge_settings() -> dict:
+    """Load knowledge runtime settings from Redis, with defaults fallback."""
+    defaults = {
+        "auto_approve_sources": False,
+        "require_source_approval": True,
+        "chat_session_knowledge_enabled": True,
+    }
+    redis_client = get_redis()
+    try:
+        cached = await redis_client.get("knowledge:settings")
+        if cached:
+            parsed = json.loads(cached)
+            if isinstance(parsed, dict):
+                return {**defaults, **parsed}
+    except Exception:
+        pass
+    return defaults
 
 
 # ─── Upload Helpers ───────────────────────────────────────────────────────────
@@ -272,8 +350,79 @@ async def _process_knowledge_source_bg(source_id: uuid.UUID) -> None:
 
 
 async def _trigger_processing(source_id: uuid.UUID) -> None:
-    """Dispatch processing to background (fire-and-forget)."""
-    asyncio.create_task(_process_knowledge_source_bg(source_id))
+    """Run knowledge processing via Celery when enabled, otherwise local background."""
+    settings = get_settings()
+    if settings.celery_enabled:
+        try:
+            from app.celery_app import celery_app
+
+            celery_app.send_task("app.tasks.process_knowledge_source", args=[str(source_id)])
+            logger.info("knowledge.processing_dispatched_celery", source_id=str(source_id))
+            return
+        except Exception as exc:
+            logger.warning("knowledge.processing_celery_fallback", source_id=str(source_id), error=str(exc))
+    await _process_knowledge_source_bg(source_id)
+
+
+async def _ingest_raw_text_bg(
+    source_id: uuid.UUID,
+    content: str,
+    initial_status: str,
+) -> None:
+    """Background ingestion for raw text payloads (article/chat conversion)."""
+    from app.database import AsyncSessionLocal
+    from app.core.knowledge_engine import KnowledgeEngine
+    from app.core.llm_router import LLMRouter
+    from app.core.vector_search import VectorSearchEngine
+
+    async with AsyncSessionLocal() as db:
+        try:
+            source_result = await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
+            source = source_result.scalar_one_or_none()
+            if source is None:
+                return
+
+            llm = LLMRouter()
+            vs = VectorSearchEngine()
+            engine = KnowledgeEngine(db, llm, vs)
+
+            await db.execute(
+                update(KnowledgeSource)
+                .where(KnowledgeSource.id == source_id)
+                .values(status=KnowledgeSourceStatus.processing.value, processing_error=None)
+            )
+            await db.commit()
+
+            chunks = engine.chunk_text(content, chunk_size=get_settings().chunk_size, overlap=get_settings().chunk_overlap)
+            if not chunks:
+                raise ValueError("No text content to ingest")
+
+            embeddings = await engine.embed_chunks(chunks)
+            await engine.store_chunks(source_id, chunks, embeddings)
+
+            await db.execute(
+                update(KnowledgeSource)
+                .where(KnowledgeSource.id == source_id)
+                .values(
+                    status=initial_status,
+                    chunk_count=len(chunks),
+                    embedding_model=get_settings().openai_embedding_model,
+                    mime_type="text/plain",
+                    file_size=len(content.encode("utf-8")),
+                    processed_at=datetime.now(UTC),
+                    processing_error=None,
+                )
+            )
+            await db.commit()
+            logger.info("knowledge.raw_text_ingested", source_id=str(source_id), chunk_count=len(chunks))
+        except Exception as exc:
+            logger.error("knowledge.raw_text_ingest_error", source_id=str(source_id), error=str(exc))
+            await db.execute(
+                update(KnowledgeSource)
+                .where(KnowledgeSource.id == source_id)
+                .values(status=KnowledgeSourceStatus.failed.value, processing_error=str(exc)[:2000])
+            )
+            await db.commit()
 
 
 # ─── POST /knowledge/sources ─────────────────────────────────────────────────
@@ -315,21 +464,38 @@ async def create_knowledge_source(
             detail="Either a file upload or a URL must be provided",
         )
 
-    # Validate auto_approve permission
+    knowledge_settings = await _get_knowledge_settings()
+    if not knowledge_settings.get("enable_knowledge_base", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Knowledge base is currently disabled",
+        )
+    require_approval = bool(knowledge_settings.get("require_source_approval", True))
+    auto_approve_by_policy = bool(knowledge_settings.get("auto_approve_sources", False)) or not require_approval
+
+    # Validate explicit auto_approve permission
     is_admin = current_user.role in ("admin", "superadmin")
     if auto_approve and not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="auto_approve requires admin role",
         )
+    resolved_auto_approve = auto_approve or auto_approve_by_policy
 
     parsed_tags = [t.strip().lower() for t in tags.split(",") if t.strip()] if tags else []
+    normalized_category = _normalize_category(category)
 
     file_path: str | None = None
     file_size: int | None = None
     mime_type: str | None = None
     content_hash: str | None = None
     mode = KnowledgeSourceMode.persistent
+    source_type = _infer_source_type(file, source_type, url)
+    if not _is_category_enabled(knowledge_settings, normalized_category):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Category '{normalized_category}' is currently disabled",
+        )
 
     if file is not None:
         file_bytes = await file.read()
@@ -354,17 +520,23 @@ async def create_knowledge_source(
         mime_type = file.content_type or "application/octet-stream"
         file_size = len(file_bytes)
         object_name = f"sources/{current_user.id}/{content_hash}/{file.filename}"
-        file_path = await _save_to_minio(file_bytes, object_name, mime_type)
+        if mime_type not in _ALLOWED_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail=f"Unsupported file type: {mime_type}",
+            )
+
+        file_path = await _store_file(file_bytes, object_name, mime_type)
 
     elif url:
         mode = KnowledgeSourceMode.linked
         source_type = KnowledgeSourceType.url
 
     initial_status = (
-        KnowledgeSourceStatus.approved if auto_approve else KnowledgeSourceStatus.pending
+        KnowledgeSourceStatus.approved if resolved_auto_approve else KnowledgeSourceStatus.pending
     )
-    approved_by = current_user.id if auto_approve else None
-    approved_at = datetime.now(UTC) if auto_approve else None
+    approved_by = current_user.id if resolved_auto_approve else None
+    approved_at = datetime.now(UTC) if resolved_auto_approve else None
 
     source = KnowledgeSource(
         name=name,
@@ -378,7 +550,7 @@ async def create_knowledge_source(
         mime_type=mime_type,
         content_hash=content_hash,
         tags=parsed_tags,
-        category=category,
+        category=normalized_category,
         client_id=client_id,
         approved_by=approved_by,
         approved_at=approved_at,
@@ -391,9 +563,9 @@ async def create_knowledge_source(
     await db.commit()
     await db.refresh(source)
 
-    # Queue background processing for approved sources
-    if source.status == KnowledgeSourceStatus.approved.value:
-        background_tasks.add_task(_trigger_processing, source.id)
+    # Always process ingestion in the background so chunking/indexing is ready.
+    # Usage is still gated by source status/flags during retrieval.
+    background_tasks.add_task(_trigger_processing, source.id)
 
     logger.info(
         "knowledge.source_created",
@@ -430,7 +602,7 @@ async def list_sources(
     if source_type:
         q = q.where(KnowledgeSource.type == source_type.value)
     if category:
-        q = q.where(KnowledgeSource.category == category)
+        q = q.where(KnowledgeSource.category == _normalize_category(category))
     if tag:
         q = q.where(KnowledgeSource.tags.contains([tag]))
 
@@ -555,7 +727,9 @@ async def approve_source(
     await db.commit()
     await db.refresh(source)
 
-    background_tasks.add_task(_trigger_processing, source.id)
+    should_reprocess = not (source.chunk_count and source.chunk_count > 0 and source.processed_at)
+    if should_reprocess:
+        background_tasks.add_task(_trigger_processing, source.id)
     logger.info("knowledge.source_approved", source_id=str(source_id), by=str(current_user.id))
     return KnowledgeSourceResponse.model_validate(source)
 
@@ -671,6 +845,15 @@ async def search_knowledge(
     # Check rate limit
     request.state.user_id = str(current_user.id)
     await check_rate_limit(request, "knowledge_search")
+    knowledge_settings = await _get_knowledge_settings()
+    if not knowledge_settings.get("enable_knowledge_base", True) or not knowledge_settings.get("knowledge_in_search", True):
+        return KnowledgeSearchResponse(
+            query=body.query,
+            mode=body.mode,
+            results=[],
+            total_found=0,
+            search_latency_ms=0,
+        )
 
     start_ts = time.monotonic()
 
@@ -696,6 +879,7 @@ async def search_knowledge(
             score_threshold=body.score_threshold,
             filters=filters or None,
             approved_only=True,
+            use_case="search",
         )
     except ImportError:
         # Fallback: basic SQL ILIKE search
@@ -705,6 +889,7 @@ async def search_knowledge(
             .where(
                 KnowledgeSource.status == KnowledgeSourceStatus.approved.value,
                 KnowledgeSource.is_active.is_(True),
+                KnowledgeSource.can_use_in_search.is_(True),
                 KnowledgeChunk.content.ilike(f"%{body.query}%"),
             )
             .limit(body.limit)
@@ -751,6 +936,97 @@ async def search_knowledge(
         total_found=len(results),
         search_latency_ms=latency_ms,
     )
+
+
+@router.get(
+    "/index/health",
+    summary="Knowledge index health",
+)
+async def knowledge_index_health(
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return DB + vector index readiness for knowledge retrieval."""
+    from app.core.vector_search import VectorSearchEngine
+
+    db_source_count = int((await db.execute(select(func.count(KnowledgeSource.id)))).scalar() or 0)
+    db_chunk_count = int((await db.execute(select(func.count(KnowledgeChunk.id)))).scalar() or 0)
+    db_approved_count = int(
+        (
+            await db.execute(
+                select(func.count(KnowledgeSource.id)).where(
+                    KnowledgeSource.status == KnowledgeSourceStatus.approved.value
+                )
+            )
+        ).scalar()
+        or 0
+    )
+    vector_health: dict[str, str | int] = {"status": "unknown"}
+    try:
+        vs = VectorSearchEngine()
+        info = await vs.get_collection_info(get_settings().qdrant_collection_knowledge)
+        vector_health = {
+            "status": "healthy",
+            "points_count": int(info.get("points_count") or 0),
+            "indexed_vectors_count": int(info.get("indexed_vectors_count") or 0),
+            "collection": str(info.get("name") or get_settings().qdrant_collection_knowledge),
+        }
+    except Exception as exc:
+        vector_health = {"status": "unhealthy", "error": str(exc)}
+
+    return {
+        "database": {
+            "sources_total": db_source_count,
+            "sources_approved": db_approved_count,
+            "chunks_total": db_chunk_count,
+        },
+        "vector_index": vector_health,
+    }
+
+
+@router.post(
+    "/index/reindex",
+    summary="Queue source re-indexing",
+)
+async def queue_reindex(
+    background_tasks: BackgroundTasks,
+    source_id: uuid.UUID | None = Query(default=None),
+    force_all: bool = Query(default=False),
+    max_sources: int = Query(default=200, ge=1, le=2000),
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Queue knowledge source reprocessing for one source or a batch."""
+    if source_id:
+        source_result = await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
+        source = source_result.scalar_one_or_none()
+        if not source:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+        background_tasks.add_task(_trigger_processing, source.id)
+        return {"queued": 1, "source_ids": [str(source.id)]}
+
+    sources_query = select(KnowledgeSource).where(
+        KnowledgeSource.is_active.is_(True),
+        KnowledgeSource.mode == KnowledgeSourceMode.persistent.value,
+        *(
+            []
+            if force_all
+            else [
+                (KnowledgeSource.chunk_count == 0)
+                | (KnowledgeSource.status == KnowledgeSourceStatus.failed.value)
+            ]
+        ),
+    ).limit(max_sources)
+    sources_result = await db.execute(sources_query)
+    sources = sources_result.scalars().all()
+    for source in sources:
+        background_tasks.add_task(_trigger_processing, source.id)
+
+    return {
+        "queued": len(sources),
+        "source_ids": [str(source.id) for source in sources],
+        "mode": "force_all" if force_all else "missing_or_failed_only",
+    }
 
 
 # ─── GET /knowledge/sources/{id}/chunks ───────────────────────────────────────
@@ -995,30 +1271,70 @@ async def rollback_chunk_version(
     summary="Create an article",
 )
 async def create_article(
-    body: KnowledgeSourceCreate,
+    body: dict,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """Create a knowledge article (text-based)."""
+    name = (body.get("name") or "").strip()
+    content = (body.get("content") or "").strip()
+    description = body.get("description")
+    tags = body.get("tags") or []
+    if isinstance(tags, str):
+        tags = [t.strip().lower() for t in tags.split(",") if t.strip()]
+    elif isinstance(tags, list):
+        tags = [str(t).strip().lower() for t in tags if str(t).strip()]
+    else:
+        tags = []
+    client_id = body.get("client_id")
+
+    if not name:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="name is required")
+    if not content:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="content is required")
+
+    settings = await _get_knowledge_settings()
+    if not settings.get("enable_knowledge_base", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Knowledge base is currently disabled",
+        )
+    normalized_category = _normalize_category(body.get("category") or KnowledgeSourceCategory.article.value)
+    if not _is_category_enabled(settings, normalized_category):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Category '{normalized_category}' is currently disabled",
+        )
+    initial_status = (
+        KnowledgeSourceStatus.approved.value
+        if (not settings.get("require_source_approval", True) or settings.get("auto_approve_sources", False))
+        else KnowledgeSourceStatus.pending.value
+    )
+
     source = KnowledgeSource(
-        name=body.name,
-        description=body.description,
+        name=name,
+        description=description,
         type=KnowledgeSourceType.manual.value,
-        category=KnowledgeSourceCategory.article.value,
-        status=KnowledgeSourceStatus.approved.value,
+        category=normalized_category,
+        status=initial_status,
         mode=KnowledgeSourceMode.persistent.value,
-        tags=body.tags or [],
-        client_id=body.client_id,
+        tags=tags,
+        client_id=client_id,
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
         is_active=True,
         can_use_in_knowledge=True,
         can_use_in_chat=True,
         can_use_in_search=True,
-        approved_by=current_user.id,
-        approved_at=datetime.now(UTC),
+        approved_by=current_user.id if initial_status == KnowledgeSourceStatus.approved.value else None,
+        approved_at=datetime.now(UTC) if initial_status == KnowledgeSourceStatus.approved.value else None,
+        src_metadata={"raw_text": content, "author_id": str(current_user.id)},
     )
     db.add(source)
     await db.commit()
     await db.refresh(source)
+
+    background_tasks.add_task(_ingest_raw_text_bg, source.id, content, source.status)
     return KnowledgeSourceResponse.model_validate(source)
 
 
@@ -1031,10 +1347,11 @@ async def create_article(
 )
 async def update_source(
     source_id: uuid.UUID,
-    can_use_in_knowledge: bool | None = None,
-    can_use_in_chat: bool | None = None,
-    can_use_in_search: bool | None = None,
-    is_active: bool | None = None,
+    body: dict | None = Body(default=None),
+    can_use_in_knowledge: bool | None = Query(default=None),
+    can_use_in_chat: bool | None = Query(default=None),
+    can_use_in_search: bool | None = Query(default=None),
+    is_active: bool | None = Query(default=None),
     current_user: User = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
@@ -1044,7 +1361,16 @@ async def update_source(
     if not source:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
 
+    payload = body or {}
     updates = {}
+    if can_use_in_knowledge is None and "can_use_in_knowledge" in payload:
+        can_use_in_knowledge = bool(payload.get("can_use_in_knowledge"))
+    if can_use_in_chat is None and "can_use_in_chat" in payload:
+        can_use_in_chat = bool(payload.get("can_use_in_chat"))
+    if can_use_in_search is None and "can_use_in_search" in payload:
+        can_use_in_search = bool(payload.get("can_use_in_search"))
+    if is_active is None and "is_active" in payload:
+        is_active = bool(payload.get("is_active"))
     if can_use_in_knowledge is not None:
         updates['can_use_in_knowledge'] = can_use_in_knowledge
     if can_use_in_chat is not None:
@@ -1119,12 +1445,35 @@ async def create_knowledge_from_conversation(
             detail="This conversation already exists in the knowledge base"
         )
 
+    knowledge_settings = await _get_knowledge_settings()
+    if not knowledge_settings.get("enable_knowledge_base", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Knowledge base is currently disabled",
+        )
+    if not knowledge_settings.get("chat_session_knowledge_enabled", True):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Chat session knowledge conversion is currently disabled",
+        )
+    if not _is_category_enabled(knowledge_settings, KnowledgeSourceCategory.chat_session.value):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Category 'chat_session' is currently disabled",
+        )
+
+    initial_status = (
+        KnowledgeSourceStatus.approved.value
+        if (not knowledge_settings.get("require_source_approval", True) or knowledge_settings.get("auto_approve_sources", False))
+        else KnowledgeSourceStatus.pending.value
+    )
+
     source = KnowledgeSource(
         name=conversation.title or f"Conversation {str(conversation_id)[:8]}",
         description=f"Conversation with {len(messages)} messages",
         type=KnowledgeSourceType.txt.value,
         category=KnowledgeSourceCategory.chat_session.value,
-        status=KnowledgeSourceStatus.pending.value,
+        status=initial_status,
         mode=KnowledgeSourceMode.persistent.value,
         content_hash=content_hash,
         mime_type="text/plain",
@@ -1137,17 +1486,16 @@ async def create_knowledge_from_conversation(
         is_active=True,
         can_use_in_knowledge=True,
         can_use_in_chat=True,
+        can_use_in_search=True,
+        approved_by=current_user.id if initial_status == KnowledgeSourceStatus.approved.value else None,
+        approved_at=datetime.now(UTC) if initial_status == KnowledgeSourceStatus.approved.value else None,
     )
 
     db.add(source)
     await db.commit()
     await db.refresh(source)
 
-    background_tasks.add_task(
-        _ingest_conversation_content,
-        source_id=source.id,
-        content=full_content,
-    )
+    background_tasks.add_task(_ingest_raw_text_bg, source.id, full_content, source.status)
 
     logger.info(
         "knowledge.conversation_added",
@@ -1157,32 +1505,3 @@ async def create_knowledge_from_conversation(
     )
 
     return KnowledgeSourceResponse.model_validate(source)
-
-
-async def _ingest_conversation_content(
-    source_id: uuid.UUID,
-    content: str,
-) -> None:
-    """Background task to ingest conversation content into knowledge base."""
-    from app.core.knowledge_engine import KnowledgeEngine
-    from app.database import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
-        try:
-            engine = KnowledgeEngine()
-            await engine.ingest_text(
-                source_id=source_id,
-                content=content,
-                db=db,
-            )
-            logger.info("knowledge.conversation_ingested", source_id=str(source_id))
-        except Exception as e:
-            logger.error("knowledge.conversation_ingest_error", source_id=str(source_id), error=str(e))
-            result = await db.execute(
-                select(KnowledgeSource).where(KnowledgeSource.id == source_id)
-            )
-            source = result.scalar_one_or_none()
-            if source:
-                source.status = KnowledgeSourceStatus.failed.value
-                source.processing_error = str(e)
-                await db.commit()

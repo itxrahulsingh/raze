@@ -334,6 +334,74 @@ async def delete_ai_config(
 # ─── MEMORY MANAGEMENT ─────────────────────────────────────────────────────
 
 
+# ─── USER MANAGEMENT ───────────────────────────────────────────────────────
+
+
+@router.get("/users")
+async def list_users(
+    request: Request,
+    q: str | None = Query(None, description="Search by email, username, or full_name"),
+    role: str | None = Query(None, description="Filter by role"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """List users for admin directory views."""
+    await deps.apply_rate_limit(request, "admin_users_list", 120, 60, current_user)
+
+    query = select(User)
+    count_query = select(func.count(User.id))
+
+    if q:
+        like = f"%{q.lower()}%"
+        query = query.where(
+            func.lower(User.email).like(like)
+            | func.lower(User.username).like(like)
+            | func.lower(func.coalesce(User.full_name, "")).like(like)
+        )
+        count_query = count_query.where(
+            func.lower(User.email).like(like)
+            | func.lower(User.username).like(like)
+            | func.lower(func.coalesce(User.full_name, "")).like(like)
+        )
+
+    if role:
+        query = query.where(User.role == role)
+        count_query = count_query.where(User.role == role)
+
+    if is_active is not None:
+        query = query.where(User.is_active.is_(is_active))
+        count_query = count_query.where(User.is_active.is_(is_active))
+
+    total = (await db.execute(count_query)).scalar() or 0
+    result = await db.execute(
+        query.order_by(desc(User.created_at)).limit(limit).offset(offset)
+    )
+    users = result.scalars().all()
+
+    return {
+        "items": [
+            {
+                "id": str(user.id),
+                "email": user.email,
+                "username": user.username,
+                "full_name": user.full_name,
+                "role": user.role,
+                "is_active": user.is_active,
+                "is_verified": user.is_verified,
+                "last_login": user.last_login.isoformat() if user.last_login else None,
+                "created_at": user.created_at.isoformat(),
+            }
+            for user in users
+        ],
+        "total": int(total),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
 @router.get("/memories")
 async def list_memories(
     request: Request,

@@ -15,10 +15,12 @@ Supports both non-streaming (process) and streaming (stream) modes.
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 import uuid
 from typing import Any, AsyncGenerator
 
+import httpx
 import structlog
 from redis.asyncio import Redis
 from sqlalchemy import select
@@ -327,6 +329,10 @@ class ChatEngine:
         knowledge_chunks: list[dict] = []
         memory_items: list[Any] = []
         context_sections: list[str] = []
+        knowledge_settings = await self._get_cached_knowledge_settings()
+        knowledge_base_enabled = bool(knowledge_settings.get("enable_knowledge_base", True))
+        knowledge_in_chat_enabled = bool(knowledge_settings.get("knowledge_in_chat", True))
+        web_search_enabled = bool(knowledge_settings.get("enable_web_search", False))
 
         # Knowledge retrieval (parallel with memory)
         async def _empty_list():
@@ -334,7 +340,12 @@ class ChatEngine:
 
         knowledge_task = (
             self._search_knowledge(message, ai_config)
-            if use_knowledge and (ai_config is None or ai_config.knowledge_enabled)
+            if (
+                use_knowledge
+                and knowledge_base_enabled
+                and knowledge_in_chat_enabled
+                and (ai_config is None or ai_config.knowledge_enabled)
+            )
             else _empty_list()
         )
         memory_task = (
@@ -364,6 +375,11 @@ class ChatEngine:
                 memory_section += f"- {content}\n"
             context_sections.append(memory_section)
 
+        if web_search_enabled:
+            web_context = await self._web_search_context(message, knowledge_settings)
+            if web_context:
+                context_sections.append(web_context)
+
         if context_sections:
             full_prompt = base_prompt + "\n\n" + "\n\n".join(context_sections)
         else:
@@ -379,12 +395,69 @@ class ChatEngine:
             return await engine.search_knowledge(
                 query=query,
                 top_k=settings.memory_max_context_items,
-                score_threshold=0.4,
+                score_threshold=0.2,
                 approved_only=True,
+                use_case="chat",
             )
         except Exception as exc:
             logger.warning("chat_engine.knowledge_search_failed", error=str(exc))
             return []
+
+    async def _get_cached_knowledge_settings(self) -> dict[str, Any]:
+        defaults = {
+            "enable_knowledge_base": True,
+            "knowledge_in_chat": True,
+            "enable_web_search": False,
+            "web_search_timeout_seconds": 15,
+        }
+        try:
+            cached = await self._redis.get("knowledge:settings")
+            if cached:
+                parsed = json.loads(cached)
+                if isinstance(parsed, dict):
+                    return {**defaults, **parsed}
+        except Exception as exc:
+            logger.warning("chat_engine.knowledge_settings_load_failed", error=str(exc))
+        return defaults
+
+    async def _web_search_context(self, query: str, knowledge_settings: dict[str, Any]) -> str | None:
+        timeout = int(knowledge_settings.get("web_search_timeout_seconds", 15) or 15)
+        endpoint = "https://api.duckduckgo.com/"
+        params = {
+            "q": query,
+            "format": "json",
+            "no_html": "1",
+            "skip_disambig": "1",
+            "no_redirect": "1",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(endpoint, params=params)
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as exc:
+            logger.warning("chat_engine.web_search_failed", error=str(exc))
+            return None
+
+        items: list[str] = []
+        abstract = (payload.get("AbstractText") or "").strip()
+        if abstract:
+            abstract_url = payload.get("AbstractURL") or payload.get("AbstractSource") or "DuckDuckGo"
+            items.append(f"- {abstract} (source: {abstract_url})")
+
+        related = payload.get("RelatedTopics") or []
+        for entry in related[:3]:
+            if isinstance(entry, dict):
+                text = (entry.get("Text") or "").strip()
+                first_url = (entry.get("FirstURL") or "").strip()
+                if text:
+                    items.append(f"- {text}" + (f" (source: {first_url})" if first_url else ""))
+            if len(items) >= 4:
+                break
+
+        if not items:
+            return None
+        return "## Web Search Context\n" + "\n".join(items)
 
     def _build_messages(
         self,

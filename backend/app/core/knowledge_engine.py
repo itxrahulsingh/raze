@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -171,6 +172,16 @@ class KnowledgeEngine:
             logger.info("knowledge_ingest_duplicate", hash=content_hash)
             return {"status": "duplicate", "content_hash": content_hash}
 
+        source_result = await self._db.execute(
+            select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+        )
+        source = source_result.scalar_one_or_none()
+        final_status = (
+            KnowledgeSourceStatus.approved.value
+            if source and source.status == KnowledgeSourceStatus.approved.value
+            else KnowledgeSourceStatus.pending.value
+        )
+
         # Update source to processing status
         await self._update_source_status(source_id, KnowledgeSourceStatus.processing.value)
 
@@ -183,6 +194,7 @@ class KnowledgeEngine:
                 file_size=len(data),
                 mime_type=f"application/{file_type}",
                 source_type=file_type,
+                final_status=final_status,
             )
         except Exception as exc:
             await self._update_source_status(
@@ -200,6 +212,16 @@ class KnowledgeEngine:
         """
         Fetch a URL and ingest its content into the knowledge base.
         """
+        source_result = await self._db.execute(
+            select(KnowledgeSource).where(KnowledgeSource.id == source_id)
+        )
+        source = source_result.scalar_one_or_none()
+        final_status = (
+            KnowledgeSourceStatus.approved.value
+            if source and source.status == KnowledgeSourceStatus.approved.value
+            else KnowledgeSourceStatus.pending.value
+        )
+
         await self._update_source_status(source_id, KnowledgeSourceStatus.processing.value)
         try:
             async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
@@ -230,6 +252,7 @@ class KnowledgeEngine:
                 file_size=len(data),
                 mime_type=content_type,
                 source_type="url",
+                final_status=final_status,
             )
         except Exception as exc:
             await self._update_source_status(
@@ -248,6 +271,7 @@ class KnowledgeEngine:
         file_size: int,
         mime_type: str,
         source_type: str,
+        final_status: str = KnowledgeSourceStatus.pending.value,
     ) -> dict[str, Any]:
         """Shared pipeline: chunk → embed → store → update source."""
         chunks = self.chunk_text(
@@ -268,7 +292,7 @@ class KnowledgeEngine:
             update(KnowledgeSource)
             .where(KnowledgeSource.id == source_id)
             .values(
-                status=KnowledgeSourceStatus.pending.value,  # pending admin approval
+                status=final_status,
                 chunk_count=len(chunks),
                 content_hash=content_hash,
                 file_size=file_size,
@@ -350,12 +374,18 @@ class KnowledgeEngine:
         Generate embeddings for all chunks in parallel batches.
         Uses OpenAI batch limit of 2048 items / call.
         """
-        BATCH = 100
+        BATCH = 32
+        max_concurrency = max(1, int(settings.embedding_max_concurrency or 8))
+        sem = asyncio.Semaphore(max_concurrency)
         embeddings: list[list[float]] = []
+
+        async def _embed_one(chunk: str) -> list[float]:
+            async with sem:
+                return await self._llm.generate_embedding(chunk)
 
         for i in range(0, len(chunks), BATCH):
             batch = chunks[i : i + BATCH]
-            tasks = [self._llm.generate_embedding(chunk) for chunk in batch]
+            tasks = [_embed_one(chunk) for chunk in batch]
             batch_embeddings = await asyncio.gather(*tasks)
             embeddings.extend(batch_embeddings)
 
@@ -429,6 +459,7 @@ class KnowledgeEngine:
         filters: dict[str, Any] | None = None,
         score_threshold: float = 0.3,
         approved_only: bool = True,
+        use_case: str = "knowledge",
     ) -> list[dict[str, Any]]:
         """
         Hybrid semantic + keyword search over the knowledge base.
@@ -459,27 +490,41 @@ class KnowledgeEngine:
                 extra_where="embedding IS NOT NULL",
             )
 
-        if not results:
-            return []
-
-        # Load full chunk content + source info from DB
-        chunk_ids = [uuid.UUID(r.id) for r in results if _is_valid_uuid(r.id)]
-        if not chunk_ids:
-            return []
-
-        chunks_result = await self._db.execute(
-            select(KnowledgeChunk, KnowledgeSource)
-            .join(KnowledgeSource, KnowledgeChunk.source_id == KnowledgeSource.id)
-            .where(
-                KnowledgeChunk.id.in_(chunk_ids),
+        def _base_filters() -> list[Any]:
+            return [
+                KnowledgeSource.is_active.is_(True),
+                *(
+                    [KnowledgeSource.can_use_in_chat.is_(True)]
+                    if use_case == "chat"
+                    else []
+                ),
+                *(
+                    [KnowledgeSource.can_use_in_search.is_(True)]
+                    if use_case == "search"
+                    else []
+                ),
+                *(
+                    [KnowledgeSource.can_use_in_knowledge.is_(True)]
+                    if use_case == "knowledge"
+                    else []
+                ),
                 *(
                     [KnowledgeSource.status == KnowledgeSourceStatus.approved.value]
                     if approved_only
                     else []
                 ),
-            )
-        )
-        rows = chunks_result.all()
+            ]
+
+        rows: list[tuple[KnowledgeChunk, KnowledgeSource]] = []
+        if results:
+            chunk_ids = [uuid.UUID(r.id) for r in results if _is_valid_uuid(r.id)]
+            if chunk_ids:
+                chunks_result = await self._db.execute(
+                    select(KnowledgeChunk, KnowledgeSource)
+                    .join(KnowledgeSource, KnowledgeChunk.source_id == KnowledgeSource.id)
+                    .where(KnowledgeChunk.id.in_(chunk_ids), *_base_filters())
+                )
+                rows = chunks_result.all()
 
         # Score map for ordering
         score_map = {r.id: r.score for r in results}
@@ -505,7 +550,41 @@ class KnowledgeEngine:
 
         # Sort by score descending
         enriched.sort(key=lambda x: -x["score"])
-        return enriched[:top_k]
+        if enriched:
+            return enriched[:top_k]
+
+        # Secondary keyword fallback when semantic/hybrid scoring misses.
+        terms = [term for term in re.split(r"\s+", query.strip()) if term]
+        terms = terms[:6]
+        if not terms:
+            return []
+
+        keyword_clause = [KnowledgeChunk.content.ilike(f"%{term}%") for term in terms]
+        from sqlalchemy import or_
+        keyword_result = await self._db.execute(
+            select(KnowledgeChunk, KnowledgeSource)
+            .join(KnowledgeSource, KnowledgeChunk.source_id == KnowledgeSource.id)
+            .where(or_(*keyword_clause), *_base_filters())
+            .order_by(KnowledgeChunk.created_at.desc())
+            .limit(top_k)
+        )
+        keyword_rows = keyword_result.all()
+        fallback: list[dict[str, Any]] = []
+        for rank, (chunk, source) in enumerate(keyword_rows):
+            fallback.append(
+                {
+                    "chunk_id": str(chunk.id),
+                    "source_id": str(source.id),
+                    "source_name": source.name,
+                    "source_type": source.type,
+                    "content": chunk.content,
+                    "chunk_index": chunk.chunk_index,
+                    "score": max(0.1, 0.6 - (rank * 0.05)),
+                    "token_count": chunk.token_count,
+                    "tags": source.tags,
+                }
+            )
+        return fallback
 
     # ── Approval workflow ─────────────────────────────────────────────────────
 

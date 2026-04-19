@@ -1,13 +1,16 @@
 """Analytics and observability API routes."""
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, Query, status, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from datetime import datetime, timedelta
 
 from app.api.v1 import deps
 from app.database import get_db
 from app.models.analytics import ObservabilityLog, UsageMetrics, UserSession
-from app.schemas.analytics import DateRangeRequest
+from app.models.conversation import Conversation, Message
+from app.models.knowledge import KnowledgeSource, KnowledgeChunk
+from app.models.tool import Tool, ToolExecution
 
 router = APIRouter()
 
@@ -20,10 +23,15 @@ async def get_analytics_overview(
     """Get analytics overview."""
     await deps.apply_rate_limit(request, "analytics_overview", 120, 60, current_user)
 
-    # Today's requests
+    now = datetime.now(UTC)
+    since_day = now - timedelta(days=1)
+    since_week = now - timedelta(days=7)
+    since_month = now - timedelta(days=30)
+
+    # Requests (prefer observability logs, fallback to assistant messages)
     today_result = await db.execute(
         select(func.count(ObservabilityLog.id)).where(
-            ObservabilityLog.created_at >= datetime.utcnow() - timedelta(days=1)
+            ObservabilityLog.created_at >= since_day
         )
     )
     today_requests = today_result.scalar() or 0
@@ -31,21 +39,55 @@ async def get_analytics_overview(
     # This week's requests
     week_result = await db.execute(
         select(func.count(ObservabilityLog.id)).where(
-            ObservabilityLog.created_at >= datetime.utcnow() - timedelta(days=7)
+            ObservabilityLog.created_at >= since_week
         )
     )
     week_requests = week_result.scalar() or 0
+
+    month_result = await db.execute(
+        select(func.count(ObservabilityLog.id)).where(
+            ObservabilityLog.created_at >= since_month
+        )
+    )
+    month_requests = month_result.scalar() or 0
+
+    # Fallback when observability table is not populated
+    if today_requests == 0 and week_requests == 0 and month_requests == 0:
+        msg_today = await db.execute(
+            select(func.count(Message.id)).where(
+                Message.created_at >= since_day,
+                Message.role == "assistant",
+            )
+        )
+        msg_week = await db.execute(
+            select(func.count(Message.id)).where(
+                Message.created_at >= since_week,
+                Message.role == "assistant",
+            )
+        )
+        msg_month = await db.execute(
+            select(func.count(Message.id)).where(
+                Message.created_at >= since_month,
+                Message.role == "assistant",
+            )
+        )
+        today_requests = int(msg_today.scalar() or 0)
+        week_requests = int(msg_week.scalar() or 0)
+        month_requests = int(msg_month.scalar() or 0)
 
     # Total cost
     cost_result = await db.execute(
         select(func.sum(ObservabilityLog.cost_usd))
     )
     total_cost_usd = float(cost_result.scalar() or 0.0)
+    if total_cost_usd == 0.0:
+        msg_cost_result = await db.execute(select(func.sum(Message.cost_usd)))
+        total_cost_usd = float(msg_cost_result.scalar() or 0.0)
 
     return {
         "today_requests": today_requests,
         "week_requests": week_requests,
-        "month_requests": 0,
+        "month_requests": month_requests,
         "total_cost_usd": total_cost_usd
     }
 
@@ -118,17 +160,42 @@ async def get_model_usage(
             ObservabilityLog.model_selected,
             func.count(ObservabilityLog.id).label("count"),
             func.sum(ObservabilityLog.cost_usd).label("total_cost")
-        ).group_by(ObservabilityLog.model_selected)
+        )
+        .where(ObservabilityLog.model_selected.is_not(None))
+        .group_by(ObservabilityLog.model_selected)
     )
 
     models = []
     for row in result:
         models.append({
-            "model": row[0],
-            "usage_count": row[1],
-            "total_cost": row[2] or 0.0
+            "model": row[0] or "unknown",
+            "usage_count": int(row[1] or 0),
+            "total_cost": float(row[2] or 0.0)
         })
 
+    if not models:
+        fallback = await db.execute(
+            select(
+                Message.model_used,
+                func.count(Message.id).label("count"),
+                func.sum(Message.cost_usd).label("total_cost"),
+            )
+            .where(
+                Message.role == "assistant",
+                Message.model_used.is_not(None),
+            )
+            .group_by(Message.model_used)
+        )
+        for row in fallback:
+            models.append(
+                {
+                    "model": row[0] or "unknown",
+                    "usage_count": int(row[1] or 0),
+                    "total_cost": float(row[2] or 0.0),
+                }
+            )
+
+    models.sort(key=lambda item: item["usage_count"], reverse=True)
     return {"models": models}
 
 @router.get("/tools")
@@ -143,17 +210,30 @@ async def get_tool_usage(
         select(
             ObservabilityLog.tool_selected,
             func.count(ObservabilityLog.id).label("count")
-        ).where(ObservabilityLog.tool_selected != None)
+        ).where(ObservabilityLog.tool_selected.is_not(None))
         .group_by(ObservabilityLog.tool_selected)
     )
 
     tools = []
     for row in result:
         tools.append({
-            "tool": row[0],
-            "usage_count": row[1]
+            "tool": row[0] or "unknown",
+            "usage_count": int(row[1] or 0)
         })
 
+    if not tools:
+        fallback = await db.execute(
+            select(
+                Tool.name,
+                func.count(ToolExecution.id).label("count"),
+            )
+            .join(Tool, Tool.id == ToolExecution.tool_id)
+            .group_by(Tool.name)
+        )
+        for row in fallback:
+            tools.append({"tool": row[0] or "unknown", "usage_count": int(row[1] or 0)})
+
+    tools.sort(key=lambda item: item["usage_count"], reverse=True)
     return {"tools": tools}
 
 @router.get("/knowledge")
@@ -164,10 +244,14 @@ async def get_knowledge_stats(
 ):
     """Get knowledge base statistics."""
     await deps.apply_rate_limit(request, "analytics_knowledge", 120, 60, current_user)
+    total_sources = int((await db.execute(select(func.count(KnowledgeSource.id)))).scalar() or 0)
+    total_chunks = int((await db.execute(select(func.count(KnowledgeChunk.id)))).scalar() or 0)
+    storage_result = await db.execute(select(func.sum(KnowledgeSource.file_size)))
+    storage_bytes = int(storage_result.scalar() or 0)
     return {
-        "total_sources": 0,
-        "total_chunks": 0,
-        "storage_mb": 0.0
+        "total_sources": total_sources,
+        "total_chunks": total_chunks,
+        "storage_mb": round(storage_bytes / (1024 * 1024), 2)
     }
 
 @router.get("/observability")

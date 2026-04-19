@@ -314,7 +314,10 @@ async def search_knowledge(
     )
 
     search_query = query.get("q", "")
-    limit = query.get("limit", 5)
+    try:
+        limit = max(1, min(50, int(query.get("limit", 5))))
+    except Exception:
+        limit = 5
 
     if not search_query:
         raise HTTPException(status_code=400, detail="Query required")
@@ -331,8 +334,9 @@ async def search_knowledge(
         results = await engine.search_knowledge(
             query=search_query,
             top_k=limit,
-            score_threshold=0.7,
+            score_threshold=0.2,
             approved_only=True,
+            use_case="search",
         )
 
         return {

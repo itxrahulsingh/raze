@@ -147,6 +147,7 @@ class Settings(BaseSettings):
         default="redis://localhost:6379/2",
         description="Celery result backend URL",
     )
+    celery_enabled: bool = False
     celery_task_serializer: str = "json"
     celery_result_expires: int = 86400  # 1 day in seconds
 
@@ -162,13 +163,14 @@ class Settings(BaseSettings):
     local_embedding_model: str = "BAAI/bge-large-en-v1.5"
     local_embedding_enabled: bool = False
     local_embedding_dimensions: int = 1024
+    embedding_max_concurrency: int = 8
 
     # ── Knowledge Processing ──────────────────────────────────────────────────
     chunk_size: int = 512
     chunk_overlap: int = 64
     max_file_size_mb: int = 50
     supported_file_types: list[str] = Field(
-        default=["pdf", "docx", "txt", "md", "html", "csv", "json"],
+        default=["pdf", "docx", "txt", "md", "html", "csv", "json", "xlsx", "xls"],
     )
 
     # ── Memory ───────────────────────────────────────────────────────────────
