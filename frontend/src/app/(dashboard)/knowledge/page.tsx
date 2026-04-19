@@ -61,7 +61,7 @@ interface Conversation {
 
 export default function KnowledgePage() {
   const { token, isAuthenticated } = useAuth()
-  const [activeTab, setActiveTab] = useState('document')
+  const [activeTab, setActiveTab] = useState(() => typeof window !== 'undefined' ? localStorage.getItem('knowledgeTab') || 'document' : 'document')
   const [sources, setSources] = useState<KnowledgeSource[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(false)
@@ -98,6 +98,10 @@ export default function KnowledgePage() {
       }
     }
   }, [activeTab, isAuthenticated, token])
+
+  useEffect(() => {
+    localStorage.setItem('knowledgeTab', activeTab)
+  }, [activeTab])
 
   const fetchSources = async () => {
     const authToken = token || localStorage.getItem('access_token')
