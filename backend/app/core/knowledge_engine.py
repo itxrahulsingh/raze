@@ -274,20 +274,47 @@ class KnowledgeEngine:
         final_status: str = KnowledgeSourceStatus.pending.value,
     ) -> dict[str, Any]:
         """Shared pipeline: chunk → embed → store → update source."""
-        chunks = self.chunk_text(
-            text,
-            chunk_size=settings.chunk_size,
-            overlap=settings.chunk_overlap,
-        )
-        if not chunks:
-            raise ValueError("No text content extracted from source")
+        try:
+            chunks = self.chunk_text(
+                text,
+                chunk_size=settings.chunk_size,
+                overlap=settings.chunk_overlap,
+            )
+            if not chunks:
+                raise ValueError("No text content extracted from source")
 
-        embeddings = await self.embed_chunks(chunks)
-        await self.store_chunks(source_id, chunks, embeddings)
+            embeddings = await self.embed_chunks(chunks)
+
+            # Validate embeddings dimensions
+            if embeddings and len(embeddings[0]) != settings.embedding_dimensions:
+                raise ValueError(
+                    f"Embedding dimension mismatch: got {len(embeddings[0])}, "
+                    f"expected {settings.embedding_dimensions}. "
+                    f"Ensure embedding model ({settings.ollama_embedding_model if settings.ollama_enabled else 'OpenAI'}) is correct."
+                )
+
+            await self.store_chunks(source_id, chunks, embeddings)
+        except Exception as e:
+            logger.error(
+                "knowledge_process_text_failed",
+                source_id=str(source_id),
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            await self._update_source_status(
+                source_id, KnowledgeSourceStatus.failed.value, error=str(e)
+            )
+            raise
 
         total_tokens = sum(_token_count(c) for c in chunks)
 
         # Update source record
+        # Determine embedding model used
+        embedding_model_name = (
+            settings.ollama_embedding_model
+            if settings.ollama_enabled
+            else settings.openai_embedding_model
+        )
         await self._db.execute(
             update(KnowledgeSource)
             .where(KnowledgeSource.id == source_id)
@@ -297,7 +324,7 @@ class KnowledgeEngine:
                 content_hash=content_hash,
                 file_size=file_size,
                 mime_type=mime_type,
-                embedding_model=settings.openai_embedding_model,
+                embedding_model=embedding_model_name,
                 processed_at=datetime.now(timezone.utc),
                 processing_error=None,
             )

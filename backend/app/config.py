@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     # ── Ollama ────────────────────────────────────────────────────────────────
     ollama_base_url: str = "http://ollama:11434"
     ollama_default_model: str = "mistral"
+    ollama_embedding_model: str = "nomic-embed-text"  # Free embeddings model
     ollama_enabled: bool = True
 
     # ── Web Search (Free - DuckDuckGo API, no key required) ──────────────────
@@ -265,6 +266,13 @@ class Settings(BaseSettings):
 
     @property
     def embedding_dimensions(self) -> int:
+        """
+        Dynamically determine embedding dimensions based on configured engine.
+        Priority: Ollama → Local → OpenAI
+        """
+        if self.ollama_enabled:
+            # Ollama with nomic-embed-text = 768 dimensions
+            return 768
         if self.local_embedding_enabled:
             return self.local_embedding_dimensions
         return self.openai_embedding_dimensions

@@ -692,28 +692,47 @@ class LLMRouter:
         model: str | None = None,
     ) -> list[float]:
         """
-        Generate dense embedding vector using Ollama when available, falls back to OpenAI.
+        Generate dense embedding vector using Ollama (primary) or OpenAI (fallback).
+        Prefers Ollama nomic-embed-text (768D) when available.
         """
+        # Priority 1: Ollama embeddings (free, no API key required)
         if settings.ollama_enabled:
             try:
-                async with httpx.AsyncClient() as client:
+                ollama_model = model or settings.ollama_embedding_model
+                async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
                         f"{settings.ollama_base_url}/api/embeddings",
-                        json={"model": "nomic-embed-text", "prompt": text},
-                        timeout=30.0
+                        json={"model": ollama_model, "prompt": text},
                     )
-                    response.raise_for_status()
-                    data = response.json()
-                    return data.get("embedding", [])
+                    if response.status_code == 200:
+                        data = response.json()
+                        embedding = data.get("embedding", [])
+                        if embedding:
+                            logger.debug(
+                                "embedding_generated_ollama",
+                                model=ollama_model,
+                                dimensions=len(embedding),
+                            )
+                            return embedding
             except Exception as exc:
-                logger.error("ollama_embedding_failed", error=str(exc))
+                logger.warning("ollama_embedding_failed", error=str(exc), text_len=len(text))
 
-        effective_model = model or settings.openai_embedding_model
-        try:
-            return await self._openai.generate_embedding(text, effective_model)
-        except Exception as exc:
-            logger.error("embedding_generation_failed", model=effective_model, error=str(exc))
-            raise
+        # Priority 2: OpenAI embeddings (fallback only if Ollama not available)
+        if settings.openai_api_key:
+            try:
+                effective_model = model or settings.openai_embedding_model
+                embedding = await self._openai.generate_embedding(text, effective_model)
+                logger.debug("embedding_generated_openai", model=effective_model)
+                return embedding
+            except Exception as exc:
+                logger.error("openai_embedding_failed", error=str(exc))
+
+        # No embedding engine available
+        logger.error("no_embedding_engine_available")
+        raise RuntimeError(
+            "No embedding engine configured. "
+            "Ensure Ollama is running with nomic-embed-text, or provide OPENAI_API_KEY"
+        )
 
     @staticmethod
     def calculate_cost(
