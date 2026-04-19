@@ -136,7 +136,7 @@ async def _ensure_chat_sdk_schema(db: AsyncSession) -> None:
 async def _get_or_create_sdk_conversation(
     db: AsyncSession,
     session_id: str,
-    domain: str,
+    domain: ChatDomain,
 ) -> Conversation:
     """Get active SDK conversation by session or create one."""
     result = await db.execute(
@@ -156,7 +156,13 @@ async def _get_or_create_sdk_conversation(
             total_tokens=0,
             total_cost_usd=0.0,
             started_at=now,
-            conv_metadata={"source": "chat_sdk", "domain": domain},
+            conv_metadata={
+                "source": "chat_sdk",
+                "domain": domain.domain,
+                "display_name": domain.display_name,
+                "bot_name": domain.bot_name,
+                "widget_color": domain.widget_color,
+            },
         )
         db.add(conv)
         await db.flush()
@@ -201,6 +207,10 @@ async def register_domain(
         domain=domain,
         display_name=display_name,
         description=domain_data.get("description"),
+        bot_name=(domain_data.get("bot_name") or "Assistant").strip()[:128],
+        welcome_message=(domain_data.get("welcome_message") or None),
+        widget_color=(domain_data.get("widget_color") or "#3B82F6"),
+        show_knowledge_sources=bool(domain_data.get("show_knowledge_sources", True)),
         api_key=api_key_hash,
         status=DomainStatus.pending.value,
         created_by=current_user.id,
@@ -245,6 +255,10 @@ async def list_domains(
                 "display_name": d.display_name,
                 "status": d.status,
                 "is_active": d.is_active,
+                "bot_name": d.bot_name,
+                "welcome_message": d.welcome_message,
+                "widget_color": d.widget_color,
+                "show_knowledge_sources": d.show_knowledge_sources,
                 "created_at": d.created_at.isoformat(),
                 "last_used": d.last_used.isoformat() if d.last_used else None,
             }
@@ -324,6 +338,74 @@ async def suspend_domain(
     )
 
     return {"status": "suspended", "domain": domain.domain}
+
+
+@router.put("/domains/{domain_id}")
+async def update_domain(
+    domain_id: uuid.UUID,
+    request: Request,
+    domain_data: dict[str, Any],
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Update editable chat SDK domain settings (admin only)."""
+    await _ensure_chat_sdk_schema(db)
+    await deps.apply_rate_limit(request, "update_domain", 60, 60, current_user)
+
+    result = await db.execute(select(ChatDomain).where(ChatDomain.id == domain_id))
+    domain = result.scalar_one_or_none()
+    if not domain:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Domain not found",
+        )
+
+    # Keep domain host immutable for safety; edit branding and behavior fields only.
+    if "display_name" in domain_data and str(domain_data.get("display_name", "")).strip():
+        domain.display_name = str(domain_data["display_name"]).strip()[:128]
+    if "description" in domain_data:
+        desc = str(domain_data.get("description") or "").strip()
+        domain.description = desc or None
+    if "bot_name" in domain_data:
+        bot_name = str(domain_data.get("bot_name") or "").strip()
+        domain.bot_name = bot_name[:128] if bot_name else "Assistant"
+    if "welcome_message" in domain_data:
+        welcome = str(domain_data.get("welcome_message") or "").strip()
+        domain.welcome_message = welcome or None
+    if "widget_color" in domain_data:
+        color = str(domain_data.get("widget_color") or "").strip()
+        if color:
+            domain.widget_color = color[:7]
+    if "show_knowledge_sources" in domain_data:
+        domain.show_knowledge_sources = bool(domain_data.get("show_knowledge_sources"))
+    if "allow_file_upload" in domain_data:
+        domain.allow_file_upload = bool(domain_data.get("allow_file_upload"))
+    if "custom_branding" in domain_data:
+        domain.custom_branding = bool(domain_data.get("custom_branding"))
+
+    await db.commit()
+    await db.refresh(domain)
+
+    logger.info(
+        "chat_domain.updated",
+        domain=domain.domain,
+        admin_id=str(current_user.id),
+    )
+
+    return {
+        "id": str(domain.id),
+        "domain": domain.domain,
+        "display_name": domain.display_name,
+        "description": domain.description,
+        "bot_name": domain.bot_name,
+        "welcome_message": domain.welcome_message,
+        "widget_color": domain.widget_color,
+        "show_knowledge_sources": domain.show_knowledge_sources,
+        "allow_file_upload": domain.allow_file_upload,
+        "custom_branding": domain.custom_branding,
+        "status": domain.status,
+        "is_active": domain.is_active,
+    }
 
 
 @router.post("/domains/{domain_id}/regenerate-key")
@@ -440,12 +522,16 @@ async def chat_with_knowledge(
 
     # Load industry config and build system prompt
     system_prompt_override = None
+    sdk_use_memory = False
+    sdk_use_knowledge = True
     try:
         settings_result = await db.execute(
             select(AppSettings).where(AppSettings.id == "singleton")
         )
         settings = settings_result.scalars().first()
         if settings:
+            sdk_use_memory = bool(settings.enable_memory)
+            sdk_use_knowledge = bool(settings.enable_knowledge_base)
             if settings.industry_system_prompt:
                 system_prompt_override = settings.industry_system_prompt
             elif settings.industry_name:
@@ -467,7 +553,7 @@ async def chat_with_knowledge(
     provider_used = "unknown"
     tokens_used = 0
 
-    conv = await _get_or_create_sdk_conversation(db, session_id, domain.domain)
+    conv = await _get_or_create_sdk_conversation(db, session_id, domain)
     user_msg = Message(
         conversation_id=conv.id,
         role=MessageRole.user.value,
@@ -487,8 +573,8 @@ async def chat_with_knowledge(
             session_id=session_id,
             user_id=None,
             ai_config_id=None,
-            use_knowledge=True,
-            use_memory=False,
+            use_knowledge=sdk_use_knowledge,
+            use_memory=sdk_use_memory,
             tools_enabled=True,
             allowed_tools=None,
             context={"domain": domain.domain, "knowledge_ids": body.knowledge_ids},
@@ -581,12 +667,16 @@ async def stream_chat_with_knowledge(
 
     # Load industry config and build system prompt
     system_prompt_override = None
+    sdk_use_memory = False
+    sdk_use_knowledge = True
     try:
         settings_result = await db.execute(
             select(AppSettings).where(AppSettings.id == "singleton")
         )
         settings = settings_result.scalars().first()
         if settings:
+            sdk_use_memory = bool(settings.enable_memory)
+            sdk_use_knowledge = bool(settings.enable_knowledge_base)
             if settings.industry_system_prompt:
                 system_prompt_override = settings.industry_system_prompt
             elif settings.industry_name:
@@ -608,7 +698,7 @@ async def stream_chat_with_knowledge(
         session_id=session_id,
     )
 
-    conv = await _get_or_create_sdk_conversation(db, session_id, domain.domain)
+    conv = await _get_or_create_sdk_conversation(db, session_id, domain)
     conv_id = conv.id
     msg_id = uuid.uuid4()
     user_msg = Message(
@@ -651,8 +741,8 @@ async def stream_chat_with_knowledge(
                 session_id=session_id,
                 user_id=None,
                 ai_config_id=None,
-                use_knowledge=True,
-                use_memory=False,
+                use_knowledge=sdk_use_knowledge,
+                use_memory=sdk_use_memory,
                 tools_enabled=True,
                 allowed_tools=None,
                 context={"domain": domain.domain, "knowledge_ids": body.knowledge_ids},
@@ -773,8 +863,8 @@ async def get_sdk_config(
         content={
             "bot_name": domain.bot_name or (getattr(app_settings, "brand_name", None) or "Assistant"),
             "welcome_message": domain.welcome_message or "How can I help you today?",
-            "widget_color": (getattr(app_settings, "primary_color", None) or "#007bff"),
-            "show_knowledge_sources": True,
+            "widget_color": domain.widget_color or (getattr(app_settings, "primary_color", None) or "#007bff"),
+            "show_knowledge_sources": bool(domain.show_knowledge_sources),
             "domain": domain.domain,
             "display_name": domain.display_name,
         },

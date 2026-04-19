@@ -392,6 +392,7 @@
 
     createHTML(configLoaded) {
       const botName = (this.config && this.config.bot_name) || 'Assistant';
+      const displayName = (this.config && this.config.display_name) || '';
       const welcomeMsg = (this.config && this.config.welcome_message) || 'How can I help you today?';
 
       const container = document.createElement('div');
@@ -403,7 +404,10 @@
 
         <div class="raze-chat-window" id="raze-window">
           <div class="raze-chat-header">
-            <h3>${this.escapeHtml(botName)}</h3>
+            <div>
+              <h3>${this.escapeHtml(botName)}</h3>
+              ${displayName ? `<div style="font-size:12px;opacity:0.9;line-height:1.2">${this.escapeHtml(displayName)}</div>` : ''}
+            </div>
             <button class="raze-close-btn" id="raze-close">×</button>
           </div>
 

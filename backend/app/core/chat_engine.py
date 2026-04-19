@@ -400,6 +400,7 @@ class ChatEngine:
         knowledge_base_enabled = bool(knowledge_settings.get("enable_knowledge_base", True))
         knowledge_in_chat_enabled = bool(knowledge_settings.get("knowledge_in_chat", True))
         web_search_enabled = bool(knowledge_settings.get("enable_web_search", False))
+        include_web_search_in_chat = bool(knowledge_settings.get("include_web_search_in_chat", True))
 
         # Knowledge retrieval (parallel with memory)
         async def _empty_list():
@@ -442,7 +443,7 @@ class ChatEngine:
                 memory_section += f"- {content}\n"
             context_sections.append(memory_section)
 
-        if web_search_enabled:
+        if web_search_enabled and include_web_search_in_chat:
             web_context = await self._web_search_context(message, knowledge_settings)
             if web_context:
                 context_sections.append(web_context)
@@ -475,17 +476,59 @@ class ChatEngine:
             "enable_knowledge_base": True,
             "knowledge_in_chat": True,
             "enable_web_search": False,
+            "include_web_search_in_chat": True,
             "web_search_timeout_seconds": 15,
         }
+        merged = dict(defaults)
+
+        # Source 1: knowledge settings cache (legacy/knowledge page controls)
         try:
             cached = await self._redis.get("knowledge:settings")
             if cached:
                 parsed = json.loads(cached)
                 if isinstance(parsed, dict):
-                    return {**defaults, **parsed}
+                    merged.update(parsed)
         except Exception as exc:
             logger.warning("chat_engine.knowledge_settings_load_failed", error=str(exc))
-        return defaults
+
+        # Source 2: app settings cache (dashboard settings page controls)
+        # This must override source 1 because users mostly configure from dashboard settings.
+        try:
+            app_cached = await self._redis.get("app:settings:singleton")
+            if app_cached:
+                app_parsed = json.loads(app_cached)
+                if isinstance(app_parsed, dict):
+                    if "enable_knowledge_base" in app_parsed:
+                        merged["enable_knowledge_base"] = bool(app_parsed["enable_knowledge_base"])
+                    if "enable_web_search" in app_parsed:
+                        merged["enable_web_search"] = bool(app_parsed["enable_web_search"])
+                    if "include_web_search_in_chat" in app_parsed:
+                        merged["include_web_search_in_chat"] = bool(app_parsed["include_web_search_in_chat"])
+                    if "enable_memory" in app_parsed:
+                        merged["enable_memory"] = bool(app_parsed["enable_memory"])
+                    if "web_search_max_results" in app_parsed:
+                        merged["web_search_max_results"] = int(app_parsed["web_search_max_results"] or 5)
+                    if "web_search_engine" in app_parsed:
+                        merged["web_search_engine"] = app_parsed["web_search_engine"]
+        except Exception as exc:
+            logger.warning("chat_engine.app_settings_cache_load_failed", error=str(exc))
+
+        # Source 3: DB fallback for app settings when cache misses
+        try:
+            if not await self._redis.get("app:settings:singleton"):
+                result = await self._db.execute(select(AppSettings).where(AppSettings.id == "singleton"))
+                row = result.scalars().first()
+                if row:
+                    merged["enable_knowledge_base"] = bool(row.enable_knowledge_base)
+                    merged["enable_web_search"] = bool(row.enable_web_search)
+                    merged["include_web_search_in_chat"] = bool(row.include_web_search_in_chat)
+                    merged["enable_memory"] = bool(row.enable_memory)
+                    merged["web_search_max_results"] = int(row.web_search_max_results or 5)
+                    merged["web_search_engine"] = row.web_search_engine
+        except Exception as exc:
+            logger.warning("chat_engine.app_settings_db_fallback_failed", error=str(exc))
+
+        return merged
 
     async def _web_search_context(self, query: str, knowledge_settings: dict[str, Any]) -> str | None:
         timeout = int(knowledge_settings.get("web_search_timeout_seconds", 15) or 15)

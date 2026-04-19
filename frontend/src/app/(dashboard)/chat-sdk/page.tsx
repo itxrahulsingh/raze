@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   Copy,
+  Edit3,
   Eye,
   EyeOff,
   Globe,
@@ -40,6 +41,9 @@ interface ChatDomain {
   display_name: string
   bot_name?: string
   welcome_message?: string
+  widget_color?: string
+  show_knowledge_sources?: boolean
+  description?: string
   status: string
   is_active: boolean
   created_at: string
@@ -69,12 +73,22 @@ export default function ChatSDKPage() {
   const [loading, setLoading] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [showNewDomain, setShowNewDomain] = useState(false)
+  const [showEditDomain, setShowEditDomain] = useState(false)
   const [formData, setFormData] = useState({
     domain: '',
     display_name: '',
     description: '',
     bot_name: '',
     welcome_message: '',
+  })
+  const [editTarget, setEditTarget] = useState<ChatDomain | null>(null)
+  const [editForm, setEditForm] = useState({
+    display_name: '',
+    description: '',
+    bot_name: '',
+    welcome_message: '',
+    widget_color: '#3B82F6',
+    show_knowledge_sources: true,
   })
   const [secretsByDomain, setSecretsByDomain] = useState<Record<string, DomainSecretState>>({})
   const [activeSecretDomainId, setActiveSecretDomainId] = useState<string | null>(null)
@@ -247,6 +261,51 @@ export default function ChatSDKPage() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Failed to delete domain'
       toast.error(msg)
+    }
+  }
+
+  const openEditDomain = (domain: ChatDomain) => {
+    setEditTarget(domain)
+    setEditForm({
+      display_name: domain.display_name || '',
+      description: domain.description || '',
+      bot_name: domain.bot_name || 'Assistant',
+      welcome_message: domain.welcome_message || '',
+      widget_color: domain.widget_color || '#3B82F6',
+      show_knowledge_sources: domain.show_knowledge_sources ?? true,
+    })
+    setShowEditDomain(true)
+  }
+
+  const handleUpdateDomain = async () => {
+    if (!editTarget) return
+    if (!editForm.display_name.trim()) {
+      toast.error('Display name is required')
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(`/api/v1/chat-sdk/domains/${editTarget.id}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(editForm),
+      })
+      const data = (await res.json()) as { detail?: string }
+      if (!res.ok) throw new Error(data.detail || 'Failed to update domain')
+      toast.success('Domain settings updated')
+      setShowEditDomain(false)
+      setEditTarget(null)
+      await fetchDomains()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to update domain'
+      toast.error(msg)
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -428,6 +487,10 @@ export default function ChatSDKPage() {
                         Last used: {domain.last_used ? new Date(domain.last_used).toLocaleString() : 'Never'}
                       </span>
                       <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" size="sm" onClick={() => openEditDomain(domain)}>
+                          <Edit3 className="mr-1.5 h-3.5 w-3.5" />
+                          Edit
+                        </Button>
                         {domain.status === 'pending' ? (
                           <Button variant="secondary" size="sm" onClick={() => updateDomainStatus(domain.id, 'approve')}>
                             <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
@@ -512,6 +575,65 @@ export default function ChatSDKPage() {
             </Button>
             <Button onClick={handleRegisterDomain} disabled={submitting}>
               {submitting ? 'Registering...' : 'Register'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showEditDomain} onOpenChange={setShowEditDomain}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Edit Domain Settings</DialogTitle>
+            <DialogDescription>
+              Update branding and welcome behavior for this SDK domain.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Input value={editTarget?.domain || ''} disabled />
+            <Input
+              placeholder="Display name"
+              value={editForm.display_name}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, display_name: event.target.value }))}
+            />
+            <Input
+              placeholder="Bot Name"
+              value={editForm.bot_name}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, bot_name: event.target.value }))}
+            />
+            <Textarea
+              placeholder="Welcome Message"
+              rows={2}
+              value={editForm.welcome_message}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, welcome_message: event.target.value }))}
+            />
+            <Input
+              placeholder="#3B82F6"
+              value={editForm.widget_color}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, widget_color: event.target.value }))}
+            />
+            <Textarea
+              placeholder="Description (optional)"
+              rows={2}
+              value={editForm.description}
+              onChange={(event) => setEditForm((prev) => ({ ...prev, description: event.target.value }))}
+            />
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={editForm.show_knowledge_sources}
+                onChange={(event) =>
+                  setEditForm((prev) => ({ ...prev, show_knowledge_sources: event.target.checked }))
+                }
+              />
+              Show knowledge sources in widget replies
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowEditDomain(false)} disabled={submitting}>
+              Cancel
+            </Button>
+            <Button onClick={handleUpdateDomain} disabled={submitting}>
+              {submitting ? 'Saving...' : 'Save Changes'}
             </Button>
           </DialogFooter>
         </DialogContent>

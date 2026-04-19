@@ -46,7 +46,7 @@ from app.config import get_settings
 from app.database import get_db, get_redis
 from app.models.analytics import UserSession
 from app.models.conversation import Conversation, ConversationStatus, Message, MessageRole
-from app.models.user import APIKey, User
+from app.models.user import APIKey, User, UserRole
 from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
@@ -62,6 +62,12 @@ from app.api.v1.deps import apply_rate_limit
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat", tags=["Chat"])
+
+
+def _is_admin_user(user: User | None) -> bool:
+    if user is None:
+        return False
+    return user.role in {UserRole.admin.value, UserRole.superadmin.value}
 
 
 # ─── Flexible Auth Dependency ─────────────────────────────────────────────────
@@ -558,7 +564,10 @@ async def list_conversations(
     if current_user is None:
         return ConversationListResponse(items=[], total=0, page=page, page_size=page_size)
 
-    q = select(Conversation).where(Conversation.user_id == current_user.id)
+    if _is_admin_user(current_user):
+        q = select(Conversation)
+    else:
+        q = select(Conversation).where(Conversation.user_id == current_user.id)
     if status_filter:
         q = q.where(Conversation.status == status_filter)
 
@@ -594,6 +603,9 @@ async def get_conversation(
 ) -> Conversation:
     """Return conversation metadata.  Ownership is enforced for authenticated users."""
     await apply_rate_limit(request, "chat_conversations_get", 30, 60, current_user)
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
@@ -601,7 +613,7 @@ async def get_conversation(
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if current_user and conv.user_id and conv.user_id != current_user.id:
+    if (not _is_admin_user(current_user)) and conv.user_id and conv.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     return conv
@@ -630,7 +642,7 @@ async def delete_conversation(
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if conv.user_id != current_user.id:
+    if (not _is_admin_user(current_user)) and conv.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     await db.delete(conv)
@@ -663,7 +675,7 @@ async def update_conversation_title(
     if not conv:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if conv.user_id and conv.user_id != current_user.id:
+    if (not _is_admin_user(current_user)) and conv.user_id and conv.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     conv.title = title
@@ -689,6 +701,9 @@ async def list_messages(
     db: AsyncSession = Depends(get_db),
 ) -> MessageListResponse:
     """Return paginated messages for a conversation."""
+    if current_user is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+
     # Verify conversation access
     conv_result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
@@ -697,7 +712,7 @@ async def list_messages(
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if current_user and conv.user_id and conv.user_id != current_user.id:
+    if (not _is_admin_user(current_user)) and conv.user_id and conv.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     q = select(Message).where(Message.conversation_id == conversation_id)
@@ -743,7 +758,7 @@ async def export_conversation(
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
-    if conv.user_id != current_user.id:
+    if (not _is_admin_user(current_user)) and conv.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     messages = sorted(conv.messages, key=lambda m: m.created_at)
