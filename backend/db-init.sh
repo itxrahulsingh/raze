@@ -45,22 +45,9 @@ done
 
 echo "✓ PostgreSQL is ready"
 
-# Run Alembic migrations
-echo "Running Alembic migrations..."
-cd /app
-
-# Export the synchronous database URL for Alembic
-export SQLALCHEMY_URL="$SYNC_DATABASE_URL"
-
-echo "Running: alembic upgrade head"
-alembic upgrade head 2>&1
-
-if [ $? -eq 0 ]; then
-  echo "✓ All migrations applied successfully"
-else
-  echo "ERROR: Migrations failed"
-  exit 1
-fi
+# Alembic migrations - skip automatic run since app ORM creates tables on startup
+# Tables are created by the application startup using ORM metadata
+echo "✓ Tables will be created by application ORM on startup"
 
 echo "=========================================="
 echo "Database initialization complete"

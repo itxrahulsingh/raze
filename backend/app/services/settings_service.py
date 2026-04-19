@@ -32,11 +32,11 @@ class SettingsService:
             cached = await self.redis.get(SETTINGS_CACHE_KEY)
             if cached:
                 data = json.loads(cached)
-                logger.info("settings.cache_hit")
+                logger.info("Settings cache hit")
                 # Return as dict, convert to AppSettings in caller
                 return data
         except Exception as e:
-            logger.warning("settings.cache_get_failed", error=str(e))
+            logger.warning(f"Settings cache get failed: {str(e)}")
 
         # Get from database
         try:
@@ -94,11 +94,11 @@ class SettingsService:
                 await self.redis.set(SETTINGS_CACHE_KEY, json.dumps(settings_dict))
                 logger.info("settings.cached")
             except Exception as e:
-                logger.warning("settings.cache_set_failed", error=str(e))
+                logger.warning(f"Settings cache set failed: {str(e)}")
 
             return settings_dict
         except Exception as e:
-            logger.error("settings.get_failed", error=str(e))
+            logger.error(f"Settings get failed: {str(e)}")
             raise
 
     async def update_settings(self, updates: Dict[str, Any]) -> AppSettings:
@@ -130,9 +130,9 @@ class SettingsService:
                 await self.redis.delete(SETTINGS_CACHE_KEY)
                 logger.info("settings.cache_invalidated")
             except Exception as e:
-                logger.warning("settings.cache_delete_failed", exc_info=True)
+                logger.warning("Settings cache delete failed", exc_info=True)
 
-            logger.info("settings.updated", keys=list(updates.keys()))
+            logger.info(f"Settings updated: {list(updates.keys())}")
             return settings
         except Exception as e:
             logger.exception("settings.update_failed")
