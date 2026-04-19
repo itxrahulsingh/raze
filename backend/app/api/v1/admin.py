@@ -62,6 +62,110 @@ async def log_audit(
         logger.warning("audit_log_failed", error=str(e))
 
 
+# ─── SETUP & HEALTH ────────────────────────────────────────────────────────
+
+
+@router.get("/setup-status")
+async def get_setup_status(
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Get system setup status - no auth required for initial setup check."""
+    import httpx
+    from app.database import get_redis
+    from app.core.vector_search import VectorSearchEngine
+
+    status_report = {
+        "ready": True,
+        "components": {},
+        "errors": [],
+    }
+
+    # Check Database
+    try:
+        result = await db.execute(select(func.count(User.id)))
+        result.scalar()
+        status_report["components"]["database"] = "healthy"
+    except Exception as e:
+        status_report["components"]["database"] = "unhealthy"
+        status_report["errors"].append(f"Database: {str(e)}")
+        status_report["ready"] = False
+
+    # Check Redis
+    try:
+        redis = get_redis()
+        await redis.ping()
+        await redis.aclose()
+        status_report["components"]["redis"] = "healthy"
+    except Exception as e:
+        status_report["components"]["redis"] = "unhealthy"
+        status_report["errors"].append(f"Redis: {str(e)}")
+        status_report["ready"] = False
+
+    # Check Vector Search (Qdrant)
+    try:
+        vs = VectorSearchEngine()
+        await vs.health_check()
+        status_report["components"]["vector_search"] = "healthy"
+    except Exception as e:
+        status_report["components"]["vector_search"] = "unhealthy"
+        status_report["errors"].append(f"Vector Search: {str(e)}")
+        status_report["ready"] = False
+
+    # Check Ollama & Models
+    ollama_status = "unconfigured"
+    mistral_loaded = False
+    embeddings_loaded = False
+    try:
+        if settings.ollama_enabled:
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+                resp.raise_for_status()
+                models_data = resp.json()
+                models = models_data.get("models", [])
+                model_names = [m["name"] for m in models]
+                mistral_loaded = any(name.startswith("mistral") for name in model_names)
+                embeddings_loaded = any(
+                    any(name.startswith(prefix) for prefix in ["nomic-embed", "all-minilm", "mxbai-embed"])
+                    for name in model_names
+                )
+                ollama_status = "healthy" if models else "no_models"
+        status_report["components"]["ollama"] = ollama_status
+        status_report["components"]["mistral_model"] = "loaded" if mistral_loaded else "missing"
+        status_report["components"]["embeddings_model"] = "loaded" if embeddings_loaded else "missing"
+        if not mistral_loaded or not embeddings_loaded:
+            status_report["ready"] = False
+            if not mistral_loaded:
+                status_report["errors"].append("Ollama: Mistral model not loaded")
+            if not embeddings_loaded:
+                status_report["errors"].append("Ollama: Embeddings model not loaded")
+    except Exception as e:
+        status_report["components"]["ollama"] = "unhealthy"
+        status_report["errors"].append(f"Ollama: {str(e)}")
+        status_report["ready"] = False
+
+    # Check Web Search capability
+    web_search_available = settings.google_api_key is not None
+    status_report["components"]["web_search"] = "configured" if web_search_available else "unconfigured"
+    if not web_search_available:
+        status_report["errors"].append("Web Search: Not configured (optional)")
+
+    # Get current app settings
+    from app.models.settings import AppSettings
+    try:
+        result = await db.execute(select(AppSettings).where(AppSettings.id == "singleton"))
+        app_settings = result.scalars().first()
+        if app_settings:
+            status_report["brand_name"] = app_settings.brand_name
+            status_report["theme_mode"] = app_settings.theme_mode
+            status_report["page_title"] = app_settings.page_title
+        else:
+            status_report["brand_name"] = "RAZE"
+    except Exception:
+        status_report["brand_name"] = "RAZE"
+
+    return status_report
+
+
 # ─── DASHBOARD ─────────────────────────────────────────────────────────────
 
 

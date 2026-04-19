@@ -358,6 +358,15 @@ class VectorSearchEngine:
             "status": str(info.status),
         }
 
+    async def health_check(self) -> bool:
+        """Check if Qdrant is healthy and accessible."""
+        try:
+            client = await self._get_client()
+            await client.get_collections()
+            return True
+        except Exception:
+            return False
+
     async def ensure_collections(self) -> None:
         """Ensure the default knowledge and memory collections exist."""
         await self.create_collection(
