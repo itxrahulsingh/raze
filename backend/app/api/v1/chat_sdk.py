@@ -7,12 +7,13 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any, AsyncGenerator
 from urllib.parse import urlparse
+import asyncio
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select, update, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -29,6 +30,8 @@ from app.core.prompt_builder import build_industry_system_prompt
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat-sdk", tags=["Chat SDK"])
 settings = get_settings()
+_sdk_schema_ready = False
+_sdk_schema_lock = asyncio.Lock()
 
 
 # Request schemas
@@ -98,6 +101,36 @@ def _cors_http_exception(status_code: int, detail: str, origin: str | None) -> H
     return HTTPException(status_code=status_code, detail=detail, headers=_cors_headers(origin))
 
 
+async def _ensure_chat_sdk_schema(db: AsyncSession) -> None:
+    """Backfill chat-sdk table columns when migrations are not applied."""
+    global _sdk_schema_ready
+    if _sdk_schema_ready:
+        return
+    async with _sdk_schema_lock:
+        if _sdk_schema_ready:
+            return
+        statements = [
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS bot_name VARCHAR(128) NOT NULL DEFAULT 'Assistant'",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS welcome_message TEXT",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS widget_color VARCHAR(7) NOT NULL DEFAULT '#3B82F6'",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS show_knowledge_sources BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS allow_file_upload BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS custom_branding BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ",
+            "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS last_used TIMESTAMPTZ",
+        ]
+        try:
+            for stmt in statements:
+                await db.execute(text(stmt))
+            await db.commit()
+            _sdk_schema_ready = True
+            logger.info("chat_sdk.schema_ready")
+        except Exception as exc:
+            await db.rollback()
+            logger.warning("chat_sdk.schema_repair_failed", error=str(exc))
+
+
 @router.post("/domains")
 async def register_domain(
     request: Request,
@@ -106,6 +139,7 @@ async def register_domain(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Register a new domain for chat SDK (admin only)."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "register_domain", 60, 60, current_user)
 
     domain = _normalize_domain(domain_data.get("domain", ""))
@@ -165,6 +199,7 @@ async def list_domains(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """List all registered domains (admin only)."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "list_domains", 120, 60, current_user)
 
     result = await db.execute(select(ChatDomain).order_by(ChatDomain.created_at.desc()))
@@ -195,6 +230,7 @@ async def approve_domain(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Approve a domain for chat SDK (admin only)."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "approve_domain", 60, 60, current_user)
 
     result = await db.execute(
@@ -230,6 +266,7 @@ async def suspend_domain(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Suspend a domain (admin only)."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "suspend_domain", 60, 60, current_user)
 
     result = await db.execute(
@@ -265,6 +302,7 @@ async def regenerate_domain_api_key(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Regenerate API key for a domain (admin only). Returns the new key once."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "regenerate_domain_key", 30, 60, current_user)
 
     result = await db.execute(select(ChatDomain).where(ChatDomain.id == domain_id))
@@ -302,6 +340,7 @@ async def delete_domain(
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a chat SDK domain (admin only)."""
+    await _ensure_chat_sdk_schema(db)
     await deps.apply_rate_limit(request, "delete_domain", 30, 60, current_user)
 
     result = await db.execute(select(ChatDomain).where(ChatDomain.id == domain_id))
@@ -331,6 +370,7 @@ async def chat_with_knowledge(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Chat endpoint for SDK embedding (requires valid API key)."""
+    await _ensure_chat_sdk_schema(db)
     from app.core.chat_engine import ChatEngine
     from app.database import get_redis
 
@@ -454,6 +494,7 @@ async def stream_chat_with_knowledge(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Streaming chat endpoint for SDK embedding (requires valid API key)."""
+    await _ensure_chat_sdk_schema(db)
     from app.core.chat_engine import ChatEngine
     from app.database import get_redis
 
@@ -608,6 +649,7 @@ async def get_sdk_config(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Get SDK widget configuration (requires valid API key)."""
+    await _ensure_chat_sdk_schema(db)
     if not x_api_key:
         raise _cors_http_exception(status.HTTP_401_UNAUTHORIZED, "API key required", origin)
 
@@ -627,16 +669,20 @@ async def get_sdk_config(
         raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Origin not allowed for this SDK domain", origin)
 
     # Get default brand config from AppSettings
-    settings_result = await db.execute(
-        select(AppSettings).where(AppSettings.id == "singleton")
-    )
-    settings = settings_result.scalars().first()
+    app_settings = None
+    try:
+        settings_result = await db.execute(
+            select(AppSettings).where(AppSettings.id == "singleton")
+        )
+        app_settings = settings_result.scalars().first()
+    except Exception as exc:
+        logger.warning("chat_sdk.config_settings_load_failed", error=str(exc))
 
     return JSONResponse(
         content={
-            "bot_name": domain.bot_name or (settings.brand_name if settings else "Assistant"),
+            "bot_name": domain.bot_name or (app_settings.brand_name if app_settings else "Assistant"),
             "welcome_message": domain.welcome_message or "How can I help you today?",
-            "widget_color": settings.primary_color if settings else "#007bff",
+            "widget_color": app_settings.primary_color if app_settings else "#007bff",
             "show_knowledge_sources": True,
             "domain": domain.domain,
             "display_name": domain.display_name,
