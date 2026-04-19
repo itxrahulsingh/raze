@@ -86,7 +86,7 @@ async def get_optional_user(
             user_id: str | None = payload.get("sub")
             if user_id:
                 result = await db.execute(select(User).where(User.id == user_id))
-                user: User | None = result.scalar_one_or_none()
+                user: User | None = result.scalars().first()
                 if user and user.is_active:
                     return user
         except HTTPException:
@@ -154,9 +154,9 @@ async def _get_or_create_conversation(
         select(Conversation).where(
             Conversation.session_id == session_id,
             Conversation.status == ConversationStatus.active.value,
-        )
+        ).order_by(Conversation.created_at.desc()).limit(1)
     )
-    conv: Conversation | None = result.scalar_one_or_none()
+    conv: Conversation | None = result.scalars().first()
     if conv is None:
         now = datetime.now(UTC)
         conv = Conversation(
@@ -595,7 +595,7 @@ async def get_conversation(
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
-    conv: Conversation | None = result.scalar_one_or_none()
+    conv: Conversation | None = result.scalars().first()
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
@@ -624,7 +624,7 @@ async def delete_conversation(
     result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
-    conv: Conversation | None = result.scalar_one_or_none()
+    conv: Conversation | None = result.scalars().first()
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
@@ -656,7 +656,7 @@ async def list_messages(
     conv_result = await db.execute(
         select(Conversation).where(Conversation.id == conversation_id)
     )
-    conv: Conversation | None = conv_result.scalar_one_or_none()
+    conv: Conversation | None = conv_result.scalars().first()
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
@@ -702,7 +702,7 @@ async def export_conversation(
         .where(Conversation.id == conversation_id)
         .options(selectinload(Conversation.messages))
     )
-    conv: Conversation | None = conv_result.scalar_one_or_none()
+    conv: Conversation | None = conv_result.scalars().first()
     if conv is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
 
