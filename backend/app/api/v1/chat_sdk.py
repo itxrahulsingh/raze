@@ -22,7 +22,7 @@ from app.models.user import User
 from app.models.settings import AppSettings
 from app.config import get_settings
 from app.api.v1 import deps
-from app.models.conversation import Message, MessageRole
+from app.models.conversation import Conversation, ConversationStatus, Message, MessageRole
 from app.schemas.chat import StreamChunk, StreamEventType
 from app.database import AsyncSessionLocal
 from app.core.prompt_builder import build_industry_system_prompt
@@ -131,6 +131,36 @@ async def _ensure_chat_sdk_schema(db: AsyncSession) -> None:
         except Exception as exc:
             await db.rollback()
             logger.warning("chat_sdk.schema_repair_failed", error=str(exc))
+
+
+async def _get_or_create_sdk_conversation(
+    db: AsyncSession,
+    session_id: str,
+    domain: str,
+) -> Conversation:
+    """Get active SDK conversation by session or create one."""
+    result = await db.execute(
+        select(Conversation).where(
+            Conversation.session_id == session_id,
+            Conversation.status == ConversationStatus.active.value,
+        ).order_by(Conversation.created_at.desc()).limit(1)
+    )
+    conv = result.scalars().first()
+    if conv is None:
+        now = datetime.now(UTC)
+        conv = Conversation(
+            session_id=session_id,
+            user_id=None,
+            status=ConversationStatus.active.value,
+            message_count=0,
+            total_tokens=0,
+            total_cost_usd=0.0,
+            started_at=now,
+            conv_metadata={"source": "chat_sdk", "domain": domain},
+        )
+        db.add(conv)
+        await db.flush()
+    return conv
 
 
 @router.post("/domains")
@@ -437,14 +467,23 @@ async def chat_with_knowledge(
     provider_used = "unknown"
     tokens_used = 0
 
+    conv = await _get_or_create_sdk_conversation(db, session_id, domain.domain)
+    user_msg = Message(
+        conversation_id=conv.id,
+        role=MessageRole.user.value,
+        content=body.message,
+    )
+    db.add(user_msg)
+    if not conv.title and conv.message_count == 0:
+        conv.title = body.message.strip()[:80]
+    await db.flush()
+
     try:
         redis_client = get_redis()
         engine = ChatEngine(db=db, redis=redis_client)
-        # Generate a temporary conversation ID for SDK (no message persistence)
-        temp_conversation_id = uuid.uuid4()
         result = await engine.process(
             message=body.message,
-            conversation_id=temp_conversation_id,
+            conversation_id=conv.id,
             session_id=session_id,
             user_id=None,
             ai_config_id=None,
@@ -464,6 +503,21 @@ async def chat_with_knowledge(
         logger.error("chat_sdk.process_error", error=str(exc), domain=domain.domain)
 
     latency_ms = int((time.monotonic() - start_ts) * 1000)
+
+    ai_msg = Message(
+        conversation_id=conv.id,
+        role=MessageRole.assistant.value,
+        content=ai_content,
+        tokens_used=tokens_used,
+        model_used=model_used,
+        provider_used=provider_used,
+        latency_ms=latency_ms,
+        cost_usd=0.0,
+    )
+    db.add(ai_msg)
+    conv.message_count = (conv.message_count or 0) + 2
+    conv.total_tokens = (conv.total_tokens or 0) + (tokens_used or 0)
+    await db.commit()
 
     return JSONResponse(
         content={
@@ -554,8 +608,19 @@ async def stream_chat_with_knowledge(
         session_id=session_id,
     )
 
+    conv = await _get_or_create_sdk_conversation(db, session_id, domain.domain)
+    conv_id = conv.id
     msg_id = uuid.uuid4()
-    conv_id = uuid.uuid4()
+    user_msg = Message(
+        conversation_id=conv_id,
+        role=MessageRole.user.value,
+        content=body.message,
+    )
+    db.add(user_msg)
+    if not conv.title and conv.message_count == 0:
+        conv.title = body.message.strip()[:80]
+    await db.commit()
+
     start_ts = time.monotonic()
 
     async def event_generator() -> AsyncGenerator[str, None]:
@@ -613,6 +678,30 @@ async def stream_chat_with_knowledge(
             yield _sse_line(StreamChunk(event=StreamEventType.delta, text=error_msg))
 
         latency_ms = int((time.monotonic() - start_ts) * 1000)
+        full_content = "".join(collected_text)
+
+        try:
+            ai_msg = Message(
+                id=msg_id,
+                conversation_id=conv_id,
+                role=MessageRole.assistant.value,
+                content=full_content,
+                tokens_used=tokens_used,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                model_used=model_used,
+                provider_used=provider_used,
+                latency_ms=latency_ms,
+                cost_usd=cost_usd,
+            )
+            db.add(ai_msg)
+            conv.message_count = (conv.message_count or 0) + 2
+            conv.total_tokens = (conv.total_tokens or 0) + (tokens_used or 0)
+            conv.total_cost_usd = (conv.total_cost_usd or 0.0) + (cost_usd or 0.0)
+            await db.commit()
+        except Exception as exc:
+            await db.rollback()
+            logger.error("chat_sdk.stream_persist_error", error=str(exc), domain=domain.domain)
 
         yield _sse_line(
             StreamChunk(
