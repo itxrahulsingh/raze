@@ -1,19 +1,27 @@
 'use client'
-import { useEffect, useState } from 'react'
-import { Copy, Globe, Plus, ShieldCheck, SquareTerminal } from 'lucide-react'
+
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Copy,
+  Eye,
+  EyeOff,
+  Globe,
+  KeyRound,
+  Link2,
+  Plus,
+  RefreshCcw,
+  ShieldCheck,
+  SquareTerminal,
+  Trash2,
+} from 'lucide-react'
+import { toast } from 'sonner'
+
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-import { Badge } from '@/components/ui/badge'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,7 +33,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
-import { toast } from 'sonner'
 
 interface ChatDomain {
   id: string
@@ -33,41 +40,87 @@ interface ChatDomain {
   display_name: string
   status: string
   is_active: boolean
-  api_key?: string
   created_at: string
   last_used?: string
+}
+
+interface DomainSecretState {
+  apiKey: string
+  visible: boolean
+}
+
+interface RegisterResponse {
+  domain_id: string
+  domain: string
+  api_key: string
+  status: string
+  message: string
+}
+
+function maskKey(apiKey: string) {
+  if (apiKey.length <= 10) return '••••••••'
+  return `${apiKey.slice(0, 10)}••••••••••••${apiKey.slice(-6)}`
 }
 
 export default function ChatSDKPage() {
   const [domains, setDomains] = useState<ChatDomain[]>([])
   const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
   const [showNewDomain, setShowNewDomain] = useState(false)
   const [formData, setFormData] = useState({
     domain: '',
     display_name: '',
     description: '',
   })
-  const [copiedKey, setCopiedKey] = useState<string | null>(null)
+  const [secretsByDomain, setSecretsByDomain] = useState<Record<string, DomainSecretState>>({})
+  const [activeSecretDomainId, setActiveSecretDomainId] = useState<string | null>(null)
+
+  const baseUrl = useMemo(() => {
+    if (typeof window === 'undefined') return 'https://your-raze-url.com'
+    return window.location.origin
+  }, [])
 
   useEffect(() => {
     fetchDomains()
   }, [])
 
   const fetchDomains = async () => {
+    setLoading(true)
     try {
       const token = localStorage.getItem('access_token')
       const res = await fetch('/api/v1/chat-sdk/domains', {
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) {
-        const data = await res.json()
-        setDomains(data.domains || [])
-      }
-    } catch {
-      // no-op
+      if (!res.ok) throw new Error(`Failed to fetch domains (${res.status})`)
+
+      const data = await res.json()
+      setDomains(data.domains || [])
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to fetch domains'
+      toast.error(msg)
     } finally {
       setLoading(false)
     }
+  }
+
+  const writeClipboard = async (value: string, label: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.success(`${label} copied`)
+    } catch {
+      toast.error(`Unable to copy ${label.toLowerCase()}`)
+    }
+  }
+
+  const setSecret = (domainId: string, apiKey: string) => {
+    setSecretsByDomain((prev) => ({
+      ...prev,
+      [domainId]: {
+        apiKey,
+        visible: false,
+      },
+    }))
+    setActiveSecretDomainId(domainId)
   }
 
   const handleRegisterDomain = async () => {
@@ -76,6 +129,7 @@ export default function ChatSDKPage() {
       return
     }
 
+    setSubmitting(true)
     try {
       const token = localStorage.getItem('access_token')
       const res = await fetch('/api/v1/chat-sdk/domains', {
@@ -87,62 +141,102 @@ export default function ChatSDKPage() {
         body: JSON.stringify(formData),
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        toast.success('Domain registered successfully')
-        if (data.api_key) {
-          toast.info('API key issued. Copy and store it securely.')
-        }
-        setFormData({ domain: '', display_name: '', description: '' })
-        setShowNewDomain(false)
-        fetchDomains()
-      } else {
-        const error = await res.json()
-        toast.error(error.detail || 'Failed to register domain')
+      const data = (await res.json()) as RegisterResponse | { detail?: string }
+      if (!res.ok) {
+        throw new Error((data as { detail?: string }).detail || 'Failed to register domain')
       }
-    } catch (e) {
-      toast.error('Error: ' + String(e))
+
+      const created = data as RegisterResponse
+      setSecret(created.domain_id, created.api_key)
+      toast.success('Domain registered. API key generated.')
+      setFormData({ domain: '', display_name: '', description: '' })
+      setShowNewDomain(false)
+      await fetchDomains()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to register domain'
+      toast.error(msg)
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  const handleApproveDomain = async (domainId: string) => {
+  const updateDomainStatus = async (domainId: string, action: 'approve' | 'suspend') => {
     try {
       const token = localStorage.getItem('access_token')
-      const res = await fetch(`/api/v1/chat-sdk/domains/${domainId}/approve`, {
+      const res = await fetch(`/api/v1/chat-sdk/domains/${domainId}/${action}`, {
         method: 'PUT',
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) {
-        toast.success('Domain approved')
-        fetchDomains()
-      }
-    } catch (e) {
-      toast.error('Error: ' + String(e))
+      if (!res.ok) throw new Error(`Failed to ${action} domain`)
+      toast.success(`Domain ${action}d`)
+      await fetchDomains()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : `Failed to ${action} domain`
+      toast.error(msg)
     }
   }
 
-  const handleSuspendDomain = async (domainId: string) => {
+  const regenerateApiKey = async (domain: ChatDomain) => {
     try {
       const token = localStorage.getItem('access_token')
-      const res = await fetch(`/api/v1/chat-sdk/domains/${domainId}/suspend`, {
-        method: 'PUT',
+      const res = await fetch(`/api/v1/chat-sdk/domains/${domain.id}/regenerate-key`, {
+        method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
       })
-      if (res.ok) {
-        toast.success('Domain suspended')
-        fetchDomains()
+      const data = (await res.json()) as { api_key?: string; detail?: string }
+      if (!res.ok || !data.api_key) {
+        throw new Error(data.detail || 'Failed to regenerate API key')
       }
-    } catch (e) {
-      toast.error('Error: ' + String(e))
+      setSecret(domain.id, data.api_key)
+      toast.success('New API key generated')
+      await fetchDomains()
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to regenerate API key'
+      toast.error(msg)
     }
   }
 
-  const copyToClipboard = (text: string, key: string) => {
-    navigator.clipboard.writeText(text)
-    toast.success('Copied API key')
-    setCopiedKey(key)
-    setTimeout(() => setCopiedKey(null), 1500)
+  const deleteDomain = async (domainId: string) => {
+    try {
+      const token = localStorage.getItem('access_token')
+      const res = await fetch(`/api/v1/chat-sdk/domains/${domainId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!res.ok) throw new Error(`Failed to delete domain (${res.status})`)
+
+      setDomains((prev) => prev.filter((item) => item.id !== domainId))
+      setSecretsByDomain((prev) => {
+        const next = { ...prev }
+        delete next[domainId]
+        return next
+      })
+      if (activeSecretDomainId === domainId) setActiveSecretDomainId(null)
+      toast.success('Domain deleted')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to delete domain'
+      toast.error(msg)
+    }
   }
+
+  const embedSnippet = (domain: ChatDomain, apiKey?: string) => {
+    const keyValue = apiKey || 'PASTE_YOUR_API_KEY'
+    return `<script>
+  window.RAZE_CONFIG = {
+    apiKey: '${keyValue}',
+    apiUrl: '${baseUrl}/api/v1',
+    position: 'bottom-right',
+    theme: '#0F766E',
+    domain: '${domain.domain}'
+  };
+</script>
+<script src="${baseUrl}/raze-chat-widget.js"></script>`
+  }
+
+  const activeSecretDomain = activeSecretDomainId
+    ? domains.find((domain) => domain.id === activeSecretDomainId) || null
+    : null
+  const activeSecret = activeSecretDomainId ? secretsByDomain[activeSecretDomainId] : undefined
 
   return (
     <div className="space-y-6">
@@ -150,9 +244,9 @@ export default function ChatSDKPage() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">SDK</p>
-            <h2 className="mt-2 text-3xl font-display font-semibold">Chat Widget Domain Control</h2>
+            <h2 className="mt-2 text-3xl font-display font-semibold">Enterprise Chat SDK Control</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Register domains, issue embed keys, and govern access for external chat surfaces.
+              Manage trusted domains, rotate API keys, and ship copy-ready embed snippets securely.
             </p>
           </div>
           <Button onClick={() => setShowNewDomain(true)}>
@@ -166,31 +260,34 @@ export default function ChatSDKPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <SquareTerminal className="h-5 w-5 text-primary" />
-            Integration Blueprint
+            Quick Integration
           </CardTitle>
-          <CardDescription>
-            Add this snippet before your site&apos;s closing body tag.
-          </CardDescription>
+          <CardDescription>Copy the script URL or full embed snippet in one click.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <pre className="overflow-x-auto rounded-xl border border-border/60 bg-slate-900 p-4 text-xs text-slate-100">
-{`<script>
-  window.RAZE_CONFIG = {
-    apiKey: 'your-api-key-here',
-    apiUrl: 'https://your-raze-url.com',
-    position: 'bottom-right',
-    theme: '#0F766E'
-  };
-</script>
-<script src="https://your-raze-url.com/raze-chat-widget.js"></script>`}
-          </pre>
+        <CardContent className="space-y-3">
+          <div className="rounded-xl border border-border/70 bg-card/60 p-3">
+            <p className="text-xs text-muted-foreground">Widget script URL</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="min-w-0 flex-1 break-all text-xs">{baseUrl}/raze-chat-widget.js</code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => writeClipboard(`${baseUrl}/raze-chat-widget.js`, 'Script URL')}
+              >
+                <Link2 className="mr-1.5 h-3.5 w-3.5" />
+                Copy URL
+              </Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader>
           <CardTitle>Registered Domains</CardTitle>
-          <CardDescription>Approve and monitor all hosted chat widget origins.</CardDescription>
+          <CardDescription>
+            Domain boxes include approval, suspension, secure key rotation, embed copy, and delete.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -199,89 +296,136 @@ export default function ChatSDKPage() {
             <p className="text-sm text-muted-foreground">No domains registered yet.</p>
           ) : (
             <div className="space-y-4">
-              {domains.map((domain) => (
-                <div key={domain.id} className="rounded-xl border border-border/70 p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <p className="font-semibold">{domain.display_name}</p>
-                      <p className="mt-1 flex items-center text-sm text-muted-foreground">
-                        <Globe className="mr-1.5 h-3.5 w-3.5" />
-                        {domain.domain}
-                      </p>
+              {domains.map((domain) => {
+                const secret = secretsByDomain[domain.id]
+                const keyText = secret ? (secret.visible ? secret.apiKey : maskKey(secret.apiKey)) : 'Hidden for security'
+                return (
+                  <div key={domain.id} className="rounded-2xl border border-border/70 bg-card/50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{domain.display_name}</p>
+                        <p className="mt-1 flex items-center text-sm text-muted-foreground">
+                          <Globe className="mr-1.5 h-3.5 w-3.5" />
+                          {domain.domain}
+                        </p>
+                      </div>
+                      <Badge
+                        variant={
+                          domain.status === 'approved'
+                            ? 'success'
+                            : domain.status === 'pending'
+                            ? 'warning'
+                            : 'outline'
+                        }
+                      >
+                        {domain.status.toUpperCase()}
+                      </Badge>
                     </div>
-                    <Badge
-                      variant={
-                        domain.status === 'approved'
-                          ? 'success'
-                          : domain.status === 'pending'
-                          ? 'warning'
-                          : 'outline'
-                      }
-                    >
-                      {domain.status.toUpperCase()}
-                    </Badge>
-                  </div>
 
-                  {domain.api_key && (
-                    <div className="mt-3 rounded-lg border border-border/70 bg-secondary/30 p-3">
+                    <div className="mt-3 rounded-xl border border-border/70 bg-background/60 p-3">
                       <p className="mb-1 text-xs text-muted-foreground">API Key</p>
                       <div className="flex flex-wrap items-center gap-2">
-                        <code className="min-w-0 flex-1 break-all text-xs">{domain.api_key}</code>
+                        <code className="min-w-0 flex-1 break-all text-xs">{keyText}</code>
+                        {secret ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() =>
+                              setSecretsByDomain((prev) => ({
+                                ...prev,
+                                [domain.id]: {
+                                  ...prev[domain.id],
+                                  visible: !prev[domain.id].visible,
+                                },
+                              }))
+                            }
+                          >
+                            {secret.visible ? <EyeOff className="mr-1.5 h-3.5 w-3.5" /> : <Eye className="mr-1.5 h-3.5 w-3.5" />}
+                            {secret.visible ? 'Hide' : 'Reveal'}
+                          </Button>
+                        ) : null}
+                        {secret ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => writeClipboard(secret.apiKey, 'API key')}
+                          >
+                            <Copy className="mr-1.5 h-3.5 w-3.5" />
+                            Copy
+                          </Button>
+                        ) : null}
+                        <Button variant="outline" size="sm" onClick={() => regenerateApiKey(domain)}>
+                          <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
+                          Regenerate
+                        </Button>
+                      </div>
+                      {!secret ? (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Keys are shown only once. Use regenerate when you need to reveal a new key.
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="mt-3 rounded-xl border border-border/70 bg-background/60 p-3">
+                      <p className="mb-1 text-xs text-muted-foreground">Embed Snippet</p>
+                      <pre className="max-h-28 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
+                        {embedSnippet(domain, secret?.apiKey)}
+                      </pre>
+                      <div className="mt-2">
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => copyToClipboard(domain.api_key!, domain.id)}
+                          onClick={() => writeClipboard(embedSnippet(domain, secret?.apiKey), 'Embed snippet')}
                         >
                           <Copy className="mr-1.5 h-3.5 w-3.5" />
-                          {copiedKey === domain.id ? 'Copied' : 'Copy'}
+                          Copy Embed Snippet
                         </Button>
                       </div>
                     </div>
-                  )}
 
-                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                    <span>
-                      Last used:{' '}
-                      {domain.last_used ? new Date(domain.last_used).toLocaleString() : 'Never'}
-                    </span>
-                    <div className="flex gap-2">
-                      {domain.status === 'pending' && (
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => handleApproveDomain(domain.id)}
-                        >
-                          <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-                          Approve
-                        </Button>
-                      )}
-                      {domain.status === 'approved' && (
+                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                      <span>
+                        Last used: {domain.last_used ? new Date(domain.last_used).toLocaleString() : 'Never'}
+                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        {domain.status === 'pending' ? (
+                          <Button variant="secondary" size="sm" onClick={() => updateDomainStatus(domain.id, 'approve')}>
+                            <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
+                            Approve
+                          </Button>
+                        ) : null}
+                        {domain.status === 'approved' ? (
+                          <Button variant="destructive" size="sm" onClick={() => updateDomainStatus(domain.id, 'suspend')}>
+                            Suspend
+                          </Button>
+                        ) : null}
                         <AlertDialog>
                           <AlertDialogTrigger asChild>
-                            <Button variant="destructive" size="sm">
-                              Suspend
+                            <Button variant="outline" size="sm" className="border-destructive/30 text-destructive hover:bg-destructive/10">
+                              <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                              Delete
                             </Button>
                           </AlertDialogTrigger>
                           <AlertDialogContent>
                             <AlertDialogHeader>
-                              <AlertDialogTitle>Suspend this domain?</AlertDialogTitle>
+                              <AlertDialogTitle>Delete this domain?</AlertDialogTitle>
                               <AlertDialogDescription>
-                                Chat widget traffic from this domain will be blocked until re-approved.
+                                This permanently removes SDK access for <strong>{domain.domain}</strong>.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
                             <AlertDialogFooter>
                               <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleSuspendDomain(domain.id)}>
-                                Suspend Domain
+                              <AlertDialogAction onClick={() => deleteDomain(domain.id)}>
+                                Delete Domain
                               </AlertDialogAction>
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
-                      )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </CardContent>
@@ -297,25 +441,78 @@ export default function ChatSDKPage() {
             <Input
               placeholder="example.com"
               value={formData.domain}
-              onChange={(e) => setFormData({ ...formData, domain: e.target.value })}
+              onChange={(event) => setFormData((prev) => ({ ...prev, domain: event.target.value }))}
             />
             <Input
               placeholder="Display name"
               value={formData.display_name}
-              onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+              onChange={(event) => setFormData((prev) => ({ ...prev, display_name: event.target.value }))}
             />
             <Textarea
               placeholder="Description (optional)"
               rows={3}
               value={formData.description}
-              onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+              onChange={(event) => setFormData((prev) => ({ ...prev, description: event.target.value }))}
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowNewDomain(false)}>
+            <Button variant="outline" onClick={() => setShowNewDomain(false)} disabled={submitting}>
               Cancel
             </Button>
-            <Button onClick={handleRegisterDomain}>Register</Button>
+            <Button onClick={handleRegisterDomain} disabled={submitting}>
+              {submitting ? 'Registering...' : 'Register'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={Boolean(activeSecretDomain && activeSecret)} onOpenChange={() => setActiveSecretDomainId(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <KeyRound className="h-5 w-5 text-primary" />
+              API Key Generated
+            </DialogTitle>
+            <DialogDescription>
+              Save this key now. For security, we do not show full keys again unless regenerated.
+            </DialogDescription>
+          </DialogHeader>
+          {activeSecretDomain && activeSecret ? (
+            <div className="space-y-3">
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <p className="text-xs text-muted-foreground">Domain</p>
+                <p className="text-sm font-medium">{activeSecretDomain.domain}</p>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <p className="text-xs text-muted-foreground">API Key</p>
+                <code className="mt-1 block break-all text-xs">{activeSecret.apiKey}</code>
+                <div className="mt-2">
+                  <Button size="sm" variant="outline" onClick={() => writeClipboard(activeSecret.apiKey, 'API key')}>
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    Copy API Key
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-border/70 bg-background/60 p-3">
+                <p className="text-xs text-muted-foreground">Embed Snippet</p>
+                <pre className="max-h-36 overflow-auto whitespace-pre-wrap text-xs text-muted-foreground">
+                  {embedSnippet(activeSecretDomain, activeSecret.apiKey)}
+                </pre>
+                <div className="mt-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => writeClipboard(embedSnippet(activeSecretDomain, activeSecret.apiKey), 'Embed snippet')}
+                  >
+                    <Copy className="mr-1.5 h-3.5 w-3.5" />
+                    Copy Embed Snippet
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button onClick={() => setActiveSecretDomainId(null)}>Done</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

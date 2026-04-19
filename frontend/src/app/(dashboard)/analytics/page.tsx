@@ -1,71 +1,145 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Activity, Bot, DollarSign, Sparkles, Wrench } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Activity, Bot, DollarSign, RefreshCcw, Sparkles, Wrench } from 'lucide-react'
+
+import { useAuth } from '@/lib/auth-context'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
-interface Model {
+interface ModelUsage {
   model: string
   usage_count: number
   total_cost: number
 }
 
-interface Tool {
+interface ToolUsage {
   tool: string
   usage_count: number
 }
 
-interface Log {
+interface ObservabilityLog {
+  id?: string
   created_at: string
-  model_selected: string
-  tool_selected: string
-  cost_usd: number
+  model_selected?: string | null
+  tool_selected?: string | null
+  cost_usd?: number | null
+}
+
+interface Overview {
+  today_requests: number
+  week_requests: number
+  month_requests?: number
+  total_cost_usd: number
 }
 
 export default function AnalyticsPage() {
-  const [overview, setOverview] = useState({
+  const { token, isAuthenticated } = useAuth()
+  const [overview, setOverview] = useState<Overview>({
     today_requests: 0,
     week_requests: 0,
+    month_requests: 0,
     total_cost_usd: 0,
   })
-  const [models, setModels] = useState<Model[]>([])
-  const [tools, setTools] = useState<Tool[]>([])
-  const [logs, setLogs] = useState<Log[]>([])
+  const [models, setModels] = useState<ModelUsage[]>([])
+  const [tools, setTools] = useState<ToolUsage[]>([])
+  const [logs, setLogs] = useState<ObservabilityLog[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
-    fetchAllAnalytics()
-  }, [])
+  const getToken = useCallback(() => token || localStorage.getItem('access_token'), [token])
 
-  const fetchAllAnalytics = async () => {
+  const safeNumber = (value: unknown, fallback = 0) => {
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+    if (typeof value === 'string') {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : fallback
+    }
+    return fallback
+  }
+
+  const fetchAllAnalytics = useCallback(async () => {
+    const authToken = getToken()
+    if (!authToken) return
+
+    setLoading(true)
+    setError(null)
+
+    const headers = { Authorization: `Bearer ${authToken}` }
+
     try {
-      const token = localStorage.getItem('access_token')
-      const headers = { Authorization: `Bearer ${token}` }
+      const [overviewRes, modelsRes, toolsRes, logsRes] = await Promise.allSettled([
+        fetch('/api/v1/analytics/overview', { headers }),
+        fetch('/api/v1/analytics/models', { headers }),
+        fetch('/api/v1/analytics/tools', { headers }),
+        fetch('/api/v1/analytics/observability?limit=20', { headers }),
+      ])
 
-      const overviewRes = await fetch('/api/v1/analytics/overview', { headers })
-      if (overviewRes.ok) setOverview(await overviewRes.json())
-
-      const modelsRes = await fetch('/api/v1/analytics/models', { headers })
-      if (modelsRes.ok) {
-        const data = await modelsRes.json()
-        setModels(data.models || [])
+      if (overviewRes.status === 'fulfilled' && overviewRes.value.ok) {
+        const payload = await overviewRes.value.json()
+        setOverview({
+          today_requests: safeNumber(payload.today_requests),
+          week_requests: safeNumber(payload.week_requests),
+          month_requests: safeNumber(payload.month_requests),
+          total_cost_usd: safeNumber(payload.total_cost_usd),
+        })
       }
 
-      const toolsRes = await fetch('/api/v1/analytics/tools', { headers })
-      if (toolsRes.ok) {
-        const data = await toolsRes.json()
-        setTools(data.tools || [])
+      if (modelsRes.status === 'fulfilled' && modelsRes.value.ok) {
+        const payload = await modelsRes.value.json()
+        setModels((payload.models || []).map((item: any) => ({
+          model: item.model || 'unknown',
+          usage_count: safeNumber(item.usage_count),
+          total_cost: safeNumber(item.total_cost),
+        })))
       }
 
-      const logsRes = await fetch('/api/v1/analytics/observability?limit=10', { headers })
-      if (logsRes.ok) setLogs(await logsRes.json())
+      if (toolsRes.status === 'fulfilled' && toolsRes.value.ok) {
+        const payload = await toolsRes.value.json()
+        setTools((payload.tools || []).map((item: any) => ({
+          tool: item.tool || 'unknown',
+          usage_count: safeNumber(item.usage_count),
+        })))
+      }
+
+      if (logsRes.status === 'fulfilled' && logsRes.value.ok) {
+        const payload = await logsRes.value.json()
+        const entries = Array.isArray(payload) ? payload : payload.items || []
+        setLogs(
+          entries.map((entry: any) => ({
+            id: entry.id,
+            created_at: entry.created_at,
+            model_selected: entry.model_selected,
+            tool_selected: entry.tool_selected,
+            cost_usd: safeNumber(entry.cost_usd, 0),
+          }))
+        )
+      }
     } catch {
-      // keep page stable with defaults
+      setError('Failed to load analytics data')
     } finally {
       setLoading(false)
     }
+  }, [getToken])
+
+  useEffect(() => {
+    if (!isAuthenticated) return
+    fetchAllAnalytics()
+  }, [fetchAllAnalytics, isAuthenticated])
+
+  const topModel = useMemo(() => {
+    if (models.length === 0) return 'N/A'
+    return [...models].sort((a, b) => b.usage_count - a.usage_count)[0].model
+  }, [models])
+
+  if (!isAuthenticated) {
+    return (
+      <div className="grid h-[70vh] place-items-center">
+        <p className="text-sm text-muted-foreground">Initializing authentication...</p>
+      </div>
+    )
   }
 
   return (
@@ -76,17 +150,27 @@ export default function AnalyticsPage() {
             <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Analytics</p>
             <h2 className="mt-2 text-3xl font-display font-semibold">Model & Tool Intelligence</h2>
             <p className="mt-2 text-sm text-muted-foreground">
-              Track request volume, routing spend, and decision-level observability in one place.
+              Track request volume, routing spend, model distribution, and decision-level observability.
             </p>
           </div>
-          <Badge variant="secondary">
-            <Sparkles className="mr-1.5 h-3.5 w-3.5" />
-            Live Telemetry
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">
+              <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+              Live Telemetry
+            </Badge>
+            <Button variant="outline" onClick={fetchAllAnalytics} disabled={loading}>
+              <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh
+            </Button>
+          </div>
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      ) : null}
+
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Today Requests</CardDescription>
@@ -97,6 +181,7 @@ export default function AnalyticsPage() {
             Real-time request volume
           </CardContent>
         </Card>
+
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Weekly Requests</CardDescription>
@@ -107,6 +192,7 @@ export default function AnalyticsPage() {
             Aggregated across providers
           </CardContent>
         </Card>
+
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>Total Cost</CardDescription>
@@ -115,6 +201,17 @@ export default function AnalyticsPage() {
           <CardContent className="pt-0 text-xs text-muted-foreground">
             <DollarSign className="mr-1 inline h-3.5 w-3.5" />
             Cumulative spend (USD)
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>Top Model</CardDescription>
+            <CardTitle className="text-xl">{topModel}</CardTitle>
+          </CardHeader>
+          <CardContent className="pt-0 text-xs text-muted-foreground">
+            <Bot className="mr-1 inline h-3.5 w-3.5" />
+            Highest request share
           </CardContent>
         </Card>
       </div>
@@ -129,20 +226,20 @@ export default function AnalyticsPage() {
               <p className="text-sm text-muted-foreground">Loading model analytics...</p>
             ) : models.length > 0 ? (
               <div className="space-y-3">
-                {models.map((model, idx) => (
-                  <div key={idx} className="rounded-xl border border-border/70 p-3">
+                {models.map((entry) => (
+                  <div key={`${entry.model}-${entry.usage_count}`} className="rounded-xl border border-border/70 p-3">
                     <div className="flex items-center justify-between">
                       <div>
-                        <p className="font-medium">{model.model || 'Unknown'}</p>
-                        <p className="text-xs text-muted-foreground">{model.usage_count} calls</p>
+                        <p className="font-medium">{entry.model}</p>
+                        <p className="text-xs text-muted-foreground">{entry.usage_count} calls</p>
                       </div>
-                      <Badge variant="outline">${(model.total_cost || 0).toFixed(4)}</Badge>
+                      <Badge variant="outline">${entry.total_cost.toFixed(4)}</Badge>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No model usage data available.</p>
+              <p className="text-sm text-muted-foreground">No model usage data available yet.</p>
             )}
           </CardContent>
         </Card>
@@ -156,20 +253,20 @@ export default function AnalyticsPage() {
               <p className="text-sm text-muted-foreground">Loading tool analytics...</p>
             ) : tools.length > 0 ? (
               <div className="space-y-3">
-                {tools.map((tool, idx) => (
-                  <div key={idx} className="rounded-xl border border-border/70 p-3">
+                {tools.map((entry) => (
+                  <div key={`${entry.tool}-${entry.usage_count}`} className="rounded-xl border border-border/70 p-3">
                     <div className="flex items-center justify-between">
-                      <p className="font-medium">{tool.tool || 'Unknown'}</p>
+                      <p className="font-medium">{entry.tool}</p>
                       <Badge variant="secondary">
                         <Wrench className="mr-1 h-3.5 w-3.5" />
-                        {tool.usage_count}
+                        {entry.usage_count}
                       </Badge>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No tool usage data available.</p>
+              <p className="text-sm text-muted-foreground">No tool usage data available yet.</p>
             )}
           </CardContent>
         </Card>
@@ -178,36 +275,34 @@ export default function AnalyticsPage() {
       <Card>
         <CardHeader>
           <CardTitle>Recent AI Decision Logs</CardTitle>
-          <CardDescription>Latest routing and tool-selection outcomes.</CardDescription>
+          <CardDescription>Latest model routing and tool-selection outcomes.</CardDescription>
         </CardHeader>
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading observability logs...</p>
           ) : logs.length > 0 ? (
-            <div className="overflow-x-auto">
-              <Table className="min-w-full">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="pr-4">Timestamp</TableHead>
-                    <TableHead className="pr-4">Model</TableHead>
-                    <TableHead className="pr-4">Tool</TableHead>
-                    <TableHead>Cost</TableHead>
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Timestamp</TableHead>
+                  <TableHead>Model</TableHead>
+                  <TableHead>Tool</TableHead>
+                  <TableHead>Cost</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {logs.map((entry, idx) => (
+                  <TableRow key={entry.id || `${entry.created_at}-${idx}`}>
+                    <TableCell>{entry.created_at ? new Date(entry.created_at).toLocaleString() : '-'}</TableCell>
+                    <TableCell>{entry.model_selected || '-'}</TableCell>
+                    <TableCell>{entry.tool_selected || '-'}</TableCell>
+                    <TableCell>${(entry.cost_usd || 0).toFixed(4)}</TableCell>
                   </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {logs.map((log, idx) => (
-                    <TableRow key={idx}>
-                      <TableCell className="py-3 pr-4">{new Date(log.created_at).toLocaleString()}</TableCell>
-                      <TableCell className="py-3 pr-4">{log.model_selected || '-'}</TableCell>
-                      <TableCell className="py-3 pr-4">{log.tool_selected || '-'}</TableCell>
-                      <TableCell className="py-3">${(log.cost_usd || 0).toFixed(4)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+                ))}
+              </TableBody>
+            </Table>
           ) : (
-            <p className="text-sm text-muted-foreground">No decision logs available.</p>
+            <p className="text-sm text-muted-foreground">No decision logs available yet.</p>
           )}
         </CardContent>
       </Card>

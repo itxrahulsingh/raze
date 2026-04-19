@@ -1,11 +1,16 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Activity, Brain, MessageSquare, Users, Database, ShieldCheck, Clock3 } from 'lucide-react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { RefreshCcw } from 'lucide-react'
 
 type DashboardStats = {
+  total_conversations?: number
+  total_messages?: number
+  total_users?: number
   conversations?: number
   messages?: number
   sources?: number
@@ -22,29 +27,49 @@ type DashboardStats = {
 
 export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchStats()
   }, [])
 
-  const fetchStats = async () => {
+  const fetchStats = useCallback(async () => {
+    setLoading(true)
+    setError(null)
     try {
       const token = localStorage.getItem('access_token')
-      const res = await fetch('/api/v1/admin/dashboard', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (res.ok) {
-        setStats(await res.json())
+      const [dashboardRes, statsRes] = await Promise.allSettled([
+        fetch('/api/v1/admin/dashboard', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch('/api/v1/admin/stats', {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ])
+
+      let next: Record<string, any> = {}
+
+      if (dashboardRes.status === 'fulfilled' && dashboardRes.value.ok) {
+        next = { ...(await dashboardRes.value.json()) }
       }
-    } catch {
-      // leave fallback values
+
+      if (statsRes.status === 'fulfilled' && statsRes.value.ok) {
+        next = { ...next, ...(await statsRes.value.json()) }
+      }
+
+      setStats(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load dashboard stats')
+    } finally {
+      setLoading(false)
     }
-  }
+  }, [])
 
   const resolved = useMemo(
     () => ({
-      conversations: stats.stats?.total_conversations ?? stats.conversations ?? 0,
-      messages: stats.messages ?? 0,
+      conversations: stats.total_conversations ?? stats.stats?.total_conversations ?? stats.conversations ?? 0,
+      messages: stats.total_messages ?? stats.messages ?? 0,
       sources: stats.stats?.total_knowledge_sources ?? stats.sources ?? 0,
       users: stats.stats?.total_users ?? stats.users ?? 0,
       activeToday: stats.stats?.active_users_today ?? 0,
@@ -99,6 +124,10 @@ export default function DashboardPage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={fetchStats} disabled={loading}>
+              <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
+              Refresh
+            </Button>
             <Badge variant="success">
               <ShieldCheck className="mr-1.5 h-3.5 w-3.5" />
               Platform Healthy
@@ -110,6 +139,10 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>
+      ) : null}
 
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {cards.map((card) => {
