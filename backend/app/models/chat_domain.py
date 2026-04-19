@@ -48,6 +48,10 @@ class ChatDomain(Base):
     custom_branding: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     widget_color: Mapped[str] = mapped_column(String(7), nullable=False, default="#3B82F6")
 
+    # Per-Domain Branding
+    bot_name: Mapped[str] = mapped_column(String(128), nullable=False, default="Assistant")
+    welcome_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Tracking
     created_by: Mapped[uuid.UUID | None] = mapped_column(
         nullable=True, index=True

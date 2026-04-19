@@ -26,6 +26,7 @@ from qdrant_client.models import (
     MatchAny,
     MatchValue,
     PointStruct,
+    Range,
     ScoredPoint,
     VectorParams,
 )
@@ -60,14 +61,32 @@ class SearchResult:
 def _build_qdrant_filter(filters: dict[str, Any] | None) -> Filter | None:
     """
     Convert a simple key=value dict into a Qdrant Filter with must conditions.
-    Each value may be a scalar (exact match) or a list (any-of match).
+    Each value may be:
+    - scalar: exact match
+    - list: any-of match
+    - dict with gte/lte/gt/lt: range query
     """
     if not filters:
         return None
 
     must_conditions: list[FieldCondition] = []
     for key, value in filters.items():
-        if isinstance(value, list):
+        if isinstance(value, dict) and any(k in value for k in ["gte", "lte", "gt", "lt"]):
+            # Range condition
+            range_kwargs = {}
+            if "gte" in value:
+                range_kwargs["gte"] = value["gte"]
+            if "lte" in value:
+                range_kwargs["lte"] = value["lte"]
+            if "gt" in value:
+                range_kwargs["gt"] = value["gt"]
+            if "lt" in value:
+                range_kwargs["lt"] = value["lt"]
+            if range_kwargs:
+                must_conditions.append(
+                    FieldCondition(key=key, range=Range(**range_kwargs))
+                )
+        elif isinstance(value, list):
             list_values = [v for v in value if v is not None]
             if not list_values:
                 continue

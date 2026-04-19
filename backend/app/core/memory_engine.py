@@ -54,9 +54,10 @@ class MemoryEngine:
                 type=memory_type,
                 content=content,
                 importance_score=importance_score,
-                decay_rate=0.95,  # 5% decay per period
+                decay_rate=self.settings.memory_decay_rate,
                 access_count=1,
                 last_accessed=datetime.utcnow(),
+                expires_at=datetime.utcnow() + timedelta(days=self.settings.memory_default_ttl_days),
                 embedding=embedding,
                 metadata=metadata or {},
                 is_active=True
@@ -199,10 +200,10 @@ class MemoryEngine:
             filters = {
                 "user_id": user_id,
                 "is_active": True,
-                "importance_score": {"$gte": min_importance}
+                "importance_score": {"gte": min_importance}
             }
             if memory_types:
-                filters["type"] = {"$in": memory_types}
+                filters["type"] = memory_types
 
             results = await self.vector_search.search(
                 "memory",
@@ -280,22 +281,54 @@ class MemoryEngine:
             if len(memories) < 2:
                 return 0
 
-            # Simple consolidation: group similar memories
-            consolidation_prompt = f"""
-            Review these {len(memories)} user memories and suggest consolidations:
+            # Consolidation prompt
+            consolidation_prompt = f"""Review these {len(memories)} user memories and suggest consolidations:
 
-            {json.dumps([m.content for m in memories], indent=2)}
+{json.dumps([m.content for m in memories], indent=2)}
 
-            Return a JSON with {{
-              "consolidated": [
-                {{"original_ids": ["id1", "id2"], "merged_content": "..."}}
-              ]
-            }}
-            """
+Return a JSON with {{"consolidated": [{{"original_ids": ["id1", "id2"], "merged_content": "..."}}]}}
+"""
 
-            # Call LLM for suggestions (simplified)
-            logger.info(f"Consolidated 0 memory groups for user {user_id}")
-            return 0
+            # Call LLM for consolidation suggestions
+            response = await self.llm_router.generate(
+                messages=[{"role": "user", "content": consolidation_prompt}],
+                model=None
+            )
+
+            merged_count = 0
+            try:
+                response_text = response.get("content", "{}")
+                parsed = json.loads(response_text)
+                groups = parsed.get("consolidated", [])
+
+                for group in groups:
+                    original_ids = group.get("original_ids", [])
+                    merged_content = group.get("merged_content", "")
+
+                    if len(original_ids) < 2 or not merged_content:
+                        continue
+
+                    # Store merged memory
+                    await self.store_memory(
+                        user_id=user_id,
+                        session_id=None,
+                        memory_type="user",
+                        content=merged_content,
+                        importance_score=0.7
+                    )
+
+                    # Deactivate originals (keep first, delete rest)
+                    for original_id in original_ids[1:]:
+                        await self.delete_memory(original_id)
+
+                    merged_count += 1
+
+                logger.info(f"Consolidated {merged_count} memory groups for user {user_id}")
+                return merged_count
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(f"Failed to parse LLM consolidation response for user {user_id}")
+                return 0
+
         except Exception as e:
             logger.error(f"Error consolidating memories: {e}")
             return 0
@@ -344,8 +377,8 @@ class MemoryEngine:
                 result = await self.db.execute(stmt)
                 memories = result.scalars().all()
 
-                # Enforce max_count
-                if len(memories) > policy.max_count:
+                # Enforce max_count (with None guard)
+                if policy.max_count is not None and len(memories) > policy.max_count:
                     to_delete = memories[policy.max_count:]
                     for mem in to_delete:
                         mem.is_active = False

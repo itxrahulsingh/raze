@@ -83,6 +83,17 @@ export default function SettingsPage() {
   const [appSettings, setAppSettings] = useState<Record<string, any>>({})
   const [loadingAppSettings, setLoadingAppSettings] = useState(false)
 
+  // Industry Config
+  const [companyName, setCompanyName] = useState('')
+  const [industryName, setIndustryName] = useState('')
+  const [industryTopics, setIndustryTopics] = useState<string[]>([])
+  const [topicInput, setTopicInput] = useState('')
+  const [industryTone, setIndustryTone] = useState('friendly')
+  const [restrictionMode, setRestrictionMode] = useState('strict')
+  const [industrySystemPrompt, setIndustrySystemPrompt] = useState('')
+  const [generatedPrompt, setGeneratedPrompt] = useState('')
+  const [generatingPrompt, setGeneratingPrompt] = useState(false)
+
   const availableModels = useMemo(
     () => (provider === 'ollama' ? ollamaModels : PROVIDER_MODELS[provider]),
     [ollamaModels, provider]
@@ -94,6 +105,7 @@ export default function SettingsPage() {
     fetchWhiteLabelSettings()
     fetchAppSettings()
     fetchOllamaModels()
+    fetchIndustryConfig()
   }, [])
 
   useEffect(() => {
@@ -241,6 +253,92 @@ export default function SettingsPage() {
     }
   }
 
+  const fetchIndustryConfig = async () => {
+    try {
+      const res = await fetch('/api/v1/settings', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setCompanyName(data.company_name || '')
+      setIndustryName(data.industry_name || '')
+      setIndustryTopics(Array.isArray(data.industry_topics) ? data.industry_topics :
+                        typeof data.industry_topics === 'string' ? JSON.parse(data.industry_topics || '[]') : [])
+      setIndustryTone(data.industry_tone || 'friendly')
+      setRestrictionMode(data.industry_restriction_mode || 'strict')
+      setIndustrySystemPrompt(data.industry_system_prompt || '')
+    } catch {
+      // keep defaults
+    }
+  }
+
+  const handleGeneratePrompt = async () => {
+    if (!industryName) {
+      toast.error('Please enter an industry name')
+      return
+    }
+    setGeneratingPrompt(true)
+    try {
+      const res = await fetch('/api/v1/settings/generate-prompt', {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          industry_name: industryName,
+          topics: industryTopics,
+          tone: industryTone,
+          restriction_mode: restrictionMode,
+          company_name: companyName,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to generate prompt')
+      const data = await res.json()
+      setGeneratedPrompt(data.prompt || '')
+      setIndustrySystemPrompt(data.prompt || '')
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to generate prompt')
+    } finally {
+      setGeneratingPrompt(false)
+    }
+  }
+
+  const handleSaveIndustryConfig = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch('/api/v1/settings', {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify({
+          company_name: companyName,
+          industry_name: industryName,
+          industry_topics: industryTopics,
+          industry_tone: industryTone,
+          industry_restriction_mode: restrictionMode,
+          industry_system_prompt: industrySystemPrompt,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to save industry config')
+      toast.success('Industry configuration saved!')
+      markSaved()
+      await fetchIndustryConfig()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to save industry config')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const addTopic = () => {
+    const topic = topicInput.trim()
+    if (topic && !industryTopics.includes(topic)) {
+      setIndustryTopics([...industryTopics, topic])
+      setTopicInput('')
+    }
+  }
+
+  const removeTopic = (topic: string) => {
+    setIndustryTopics(industryTopics.filter(t => t !== topic))
+  }
+
   const handleProviderChange = (nextProvider: ProviderKey) => {
     setProvider(nextProvider)
     const models = nextProvider === 'ollama' ? ollamaModels : PROVIDER_MODELS[nextProvider]
@@ -344,6 +442,7 @@ export default function SettingsPage() {
           <TabsTrigger value="ai-config">AI Configuration</TabsTrigger>
           <TabsTrigger value="providers">Provider Setup</TabsTrigger>
           <TabsTrigger value="white-label">White Label</TabsTrigger>
+          <TabsTrigger value="industry-config">Industry Config</TabsTrigger>
           <TabsTrigger value="app-settings">App Settings</TabsTrigger>
         </TabsList>
 
@@ -626,6 +725,110 @@ export default function SettingsPage() {
               <Button onClick={handleSaveWhiteLabel} disabled={loading} className="w-full">
                 {loading ? 'Saving...' : 'Save White Label Settings'}
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="industry-config">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Bot className="h-5 w-5 text-primary" />
+                Industry Configuration
+              </CardTitle>
+              <CardDescription>Configure industry-specific behavior, restrictions, and system prompts.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="text-sm font-medium">Company Name</label>
+                  <Input
+                    placeholder="e.g., Travel & Leisure Co"
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Industry Name</label>
+                  <Input
+                    placeholder="e.g., Travel & Tourism"
+                    value={industryName}
+                    onChange={(e) => setIndustryName(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">Allowed Topics</label>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Add topic (e.g., flights, hotels, destinations)"
+                    value={topicInput}
+                    onChange={(e) => setTopicInput(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        addTopic()
+                      }
+                    }}
+                  />
+                  <Button onClick={addTopic}>Add</Button>
+                </div>
+                {industryTopics.length > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {industryTopics.map((topic) => (
+                      <Badge key={topic} className="cursor-pointer" onClick={() => removeTopic(topic)}>
+                        {topic} ✕
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="text-sm font-medium">Tone</label>
+                  <Select value={industryTone} onChange={(e) => setIndustryTone(e.target.value)}>
+                    <option value="professional">Professional</option>
+                    <option value="friendly">Friendly</option>
+                    <option value="casual">Casual</option>
+                    <option value="formal">Formal</option>
+                  </Select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Restriction Mode</label>
+                  <Select value={restrictionMode} onChange={(e) => setRestrictionMode(e.target.value)}>
+                    <option value="strict">Strict (refuse off-topic)</option>
+                    <option value="soft">Soft (prefer on-topic)</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-medium">System Prompt</label>
+                <Textarea
+                  rows={6}
+                  value={industrySystemPrompt}
+                  onChange={(e) => setIndustrySystemPrompt(e.target.value)}
+                  placeholder="Leave empty to auto-generate from settings above..."
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <Button onClick={handleGeneratePrompt} disabled={generatingPrompt || !industryName} variant="outline">
+                  {generatingPrompt ? 'Generating...' : 'Generate System Prompt'}
+                </Button>
+                <Button onClick={handleSaveIndustryConfig} disabled={loading} className="flex-1">
+                  {loading ? 'Saving...' : 'Save Industry Config'}
+                </Button>
+              </div>
+
+              {generatedPrompt && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">
+                  <p className="mb-2 font-medium">Generated Prompt Preview:</p>
+                  <p className="whitespace-pre-wrap text-xs">{generatedPrompt}</p>
+                </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

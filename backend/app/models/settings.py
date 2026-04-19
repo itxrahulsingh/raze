@@ -69,6 +69,14 @@ class AppSettings(Base):
     auto_approve_sources: Mapped[bool] = mapped_column(Boolean, default=True)
     max_file_size_mb: Mapped[int] = mapped_column(default=100)
 
+    # Industry Configuration (server-wide, not per-domain)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    industry_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    industry_topics: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON array
+    industry_tone: Mapped[str] = mapped_column(String(50), default="friendly")  # professional/friendly/casual/formal
+    industry_restriction_mode: Mapped[str] = mapped_column(String(20), default="strict")  # strict/soft
+    industry_system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # Timestamp
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

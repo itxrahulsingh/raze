@@ -3,15 +3,26 @@ import json
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import get_current_user
+from app.core.prompt_builder import build_industry_system_prompt
 from app.database import get_db
 from app.models.user import User
 from app.models.settings import AppSettings
 from app.services.settings_service import SettingsService
 
 router = APIRouter(prefix="/settings", tags=["settings"])
+
+
+# Request schemas
+class GeneratePromptRequest(BaseModel):
+    industry_name: str
+    topics: list[str] = []
+    tone: str = "friendly"
+    restriction_mode: str = "strict"
+    company_name: str | None = None
 
 
 async def get_current_user_optional() -> Optional[User]:
@@ -61,6 +72,13 @@ async def get_settings(
         "web_search_engine": settings.get("web_search_engine", "duckduckgo"),
         "web_search_max_results": settings.get("web_search_max_results", 5),
         "include_web_search_in_chat": settings.get("include_web_search_in_chat", True),
+        # Industry configuration (public)
+        "company_name": settings.get("company_name"),
+        "industry_name": settings.get("industry_name"),
+        "industry_topics": settings.get("industry_topics", []),
+        "industry_tone": settings.get("industry_tone", "friendly"),
+        "industry_restriction_mode": settings.get("industry_restriction_mode", "strict"),
+        "industry_system_prompt": settings.get("industry_system_prompt"),
     }
 
 
@@ -136,3 +154,31 @@ async def reset_settings(
     service = SettingsService(db, redis)
     await service.reset_to_defaults()
     return await service.get_all_settings()
+
+
+@router.post(
+    "/generate-prompt",
+    response_model=Dict[str, str],
+    summary="Generate system prompt from industry config",
+)
+async def generate_system_prompt(
+    request: GeneratePromptRequest,
+    current_user: User = Depends(get_current_user),
+) -> Dict[str, str]:
+    """Generate a system prompt based on industry configuration (admin only)."""
+    # Check admin permission
+    if current_user.role not in ("admin", "superadmin"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only admins can generate prompts",
+        )
+
+    prompt = build_industry_system_prompt(
+        industry_name=request.industry_name,
+        topics=request.topics,
+        tone=request.tone,
+        restriction_mode=request.restriction_mode,
+        company_name=request.company_name,
+    )
+
+    return {"prompt": prompt}

@@ -83,6 +83,7 @@ class ChatEngine:
         allowed_tools: list[str] | None = None,
         context: dict[str, Any] | None = None,
         history: list[dict[str, Any]] | None = None,
+        system_prompt_override: str | None = None,
     ) -> dict[str, Any]:
         """
         Process a message non-streaming. Returns a full result dict.
@@ -97,6 +98,7 @@ class ChatEngine:
             ai_config=ai_config,
             use_knowledge=use_knowledge,
             use_memory=use_memory,
+            system_prompt_override=system_prompt_override,
         )
 
         messages = self._build_messages(
@@ -209,6 +211,7 @@ class ChatEngine:
         tools_enabled: bool = True,
         allowed_tools: list[str] | None = None,
         context: dict[str, Any] | None = None,
+        system_prompt_override: str | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """
         Stream the response as delta chunks.
@@ -231,6 +234,7 @@ class ChatEngine:
                     ai_config=ai_config,
                     use_knowledge=use_knowledge,
                     use_memory=use_memory,
+                    system_prompt_override=system_prompt_override,
                 ),
                 timeout=3.0
             )
@@ -238,9 +242,8 @@ class ChatEngine:
             logger.warning("chat.context_build_timeout", message_preview=message[:50])
             # Proceed with minimal context
             base_prompt = (
-                ai_config.system_prompt
-                if ai_config and ai_config.system_prompt
-                else _DEFAULT_SYSTEM_PROMPT
+                system_prompt_override or
+                (ai_config.system_prompt if ai_config and ai_config.system_prompt else _DEFAULT_SYSTEM_PROMPT)
             )
             system_prompt = base_prompt
             knowledge_chunks = []
@@ -327,6 +330,7 @@ class ChatEngine:
         ai_config: AIConfig | None,
         use_knowledge: bool,
         use_memory: bool,
+        system_prompt_override: str | None = None,
     ) -> tuple[str, list[dict], list[Any]]:
         """
         Build the enriched system prompt from knowledge and memory.
@@ -338,9 +342,8 @@ class ChatEngine:
         memory_items   : list   – retrieved memory items
         """
         base_prompt = (
-            ai_config.system_prompt
-            if ai_config and ai_config.system_prompt
-            else _DEFAULT_SYSTEM_PROMPT
+            system_prompt_override or
+            (ai_config.system_prompt if ai_config and ai_config.system_prompt else _DEFAULT_SYSTEM_PROMPT)
         )
 
         knowledge_chunks: list[dict] = []

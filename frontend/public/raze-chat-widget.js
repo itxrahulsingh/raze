@@ -1,13 +1,19 @@
 /**
  * RAZE Chat Widget - Embeddable Chat SDK
  *
+ * Features:
+ * - Session persistence (per visitor UUID)
+ * - Config loading from backend (bot name, welcome message, colors)
+ * - Real-time SSE streaming with live token append
+ * - Pure JS markdown rendering (bold, italic, code, lists, links)
+ * - Error handling with graceful fallbacks
+ *
  * Usage:
  * <script>
  *   window.RAZE_CONFIG = {
  *     apiKey: 'raze_sk_xxxxx',
  *     apiUrl: 'https://your-raze-instance.com',
- *     position: 'bottom-right', // bottom-right, bottom-left, top-right, top-left
- *     theme: '#3B82F6'
+ *     position: 'bottom-right'
  *   };
  * </script>
  * <script src="https://your-raze-instance.com/raze-chat-widget.js"></script>
@@ -18,9 +24,8 @@
 
   const CONFIG = window.RAZE_CONFIG || {};
   const API_KEY = CONFIG.apiKey;
-  const API_URL = CONFIG.apiUrl || 'http://localhost';
+  const API_URL = CONFIG.apiUrl || 'http://localhost:8000';
   const POSITION = CONFIG.position || 'bottom-right';
-  const THEME_COLOR = CONFIG.theme || '#3B82F6';
 
   if (!API_KEY) {
     console.error('RAZE Chat Widget: apiKey not configured');
@@ -31,18 +36,59 @@
     constructor() {
       this.isOpen = false;
       this.messages = [];
-      this.selectedKnowledge = new Set();
+      this.config = null;
+      this.sessionId = this.getOrCreateSessionId();
+      this.isStreaming = false;
       this.init();
     }
 
-    init() {
+    getOrCreateSessionId() {
+      const key = `raze_session_${API_KEY.substring(0, 8)}`;
+      let sessionId = sessionStorage.getItem(key);
+      if (!sessionId) {
+        sessionId = 'sdk_' + Math.random().toString(16).substr(2, 8);
+        sessionStorage.setItem(key, sessionId);
+      }
+      return sessionId;
+    }
+
+    async init() {
       this.createStyles();
-      this.createHTML();
+      // Load config before rendering HTML
+      const configLoaded = await this.loadConfig();
+      this.createHTML(configLoaded);
       this.attachEventListeners();
+    }
+
+    async loadConfig() {
+      try {
+        const response = await fetch(`${API_URL}/api/v1/chat-sdk/config`, {
+          method: 'GET',
+          headers: {
+            'X-API-Key': API_KEY,
+          },
+        });
+        if (response.ok) {
+          this.config = await response.json();
+          return true;
+        }
+      } catch (error) {
+        console.warn('Failed to load widget config:', error);
+      }
+      // Use defaults if config load fails
+      this.config = {
+        bot_name: 'Assistant',
+        welcome_message: 'How can I help you today?',
+        widget_color: '#007bff',
+        show_knowledge_sources: true,
+      };
+      return false;
     }
 
     createStyles() {
       const style = document.createElement('style');
+      const THEME_COLOR = (this.config && this.config.widget_color) || '#007bff';
+
       style.textContent = `
         .raze-widget-container {
           position: fixed;
@@ -78,7 +124,6 @@
         }
 
         .raze-chat-window {
-          display: none;
           position: absolute;
           ${POSITION.includes('bottom') ? 'bottom: 80px;' : 'top: 80px;'}
           ${POSITION.includes('right') ? 'right: 0;' : 'left: 0;'}
@@ -87,7 +132,7 @@
           background: white;
           border-radius: 12px;
           box-shadow: 0 5px 40px rgba(0, 0, 0, 0.16);
-          display: flex;
+          display: none;
           flex-direction: column;
           overflow: hidden;
           animation: slideIn 0.3s ease;
@@ -130,6 +175,7 @@
           color: white;
           font-size: 24px;
           cursor: pointer;
+          padding: 0;
         }
 
         .raze-messages {
@@ -162,8 +208,9 @@
           padding: 10px 14px;
           border-radius: 12px;
           font-size: 14px;
-          line-height: 1.4;
+          line-height: 1.5;
           word-wrap: break-word;
+          white-space: pre-wrap;
         }
 
         .raze-message.assistant .raze-message-content {
@@ -177,30 +224,59 @@
           color: white;
         }
 
+        /* Markdown styles */
+        .raze-message-content strong {
+          font-weight: 600;
+        }
+
+        .raze-message-content em {
+          font-style: italic;
+        }
+
+        .raze-message-content code {
+          background: #f0f0f0;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-family: 'Courier New', monospace;
+          font-size: 0.9em;
+        }
+
+        .raze-message.assistant .raze-message-content code {
+          background: #e5e7eb;
+          color: #1f2937;
+        }
+
+        .raze-message.user .raze-message-content code {
+          background: rgba(255, 255, 255, 0.2);
+          color: white;
+        }
+
+        .raze-message-content ul,
+        .raze-message-content ol {
+          margin: 8px 0;
+          padding-left: 20px;
+        }
+
+        .raze-message-content li {
+          margin: 4px 0;
+        }
+
+        .raze-message-content a {
+          color: ${THEME_COLOR};
+          text-decoration: underline;
+          cursor: pointer;
+        }
+
+        .raze-message.user .raze-message-content a {
+          color: white;
+        }
+
         .raze-input-area {
           padding: 12px 16px;
           background: white;
           border-top: 1px solid #e5e7eb;
           display: flex;
           gap: 8px;
-        }
-
-        .raze-knowledge-toggle {
-          padding: 8px;
-          background: #f3f4f6;
-          border: 1px solid #d1d5db;
-          border-radius: 6px;
-          font-size: 12px;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .raze-knowledge-toggle.active {
-          background: ${THEME_COLOR};
-          color: white;
-          border-color: ${THEME_COLOR};
         }
 
         .raze-input-group {
@@ -284,7 +360,10 @@
       document.head.appendChild(style);
     }
 
-    createHTML() {
+    createHTML(configLoaded) {
+      const botName = (this.config && this.config.bot_name) || 'Assistant';
+      const welcomeMsg = (this.config && this.config.welcome_message) || 'How can I help you today?';
+
       const container = document.createElement('div');
       container.className = 'raze-widget-container';
       container.innerHTML = `
@@ -294,22 +373,19 @@
 
         <div class="raze-chat-window" id="raze-window">
           <div class="raze-chat-header">
-            <h3>Chat Assistant</h3>
+            <h3>${this.escapeHtml(botName)}</h3>
             <button class="raze-close-btn" id="raze-close">×</button>
           </div>
 
           <div class="raze-messages" id="raze-messages">
             <div class="raze-message assistant">
               <div class="raze-message-content">
-                👋 Hi! How can I help you today?
+                👋 ${this.escapeHtml(welcomeMsg)}
               </div>
             </div>
           </div>
 
           <div class="raze-input-area">
-            <button class="raze-knowledge-toggle active" id="raze-knowledge-toggle" title="Use knowledge base">
-              📚 Knowledge
-            </button>
             <div class="raze-input-group">
               <input
                 type="text"
@@ -330,10 +406,8 @@
     attachEventListeners() {
       const toggle = document.getElementById('raze-toggle');
       const close = document.getElementById('raze-close');
-      const window = document.getElementById('raze-window');
       const input = document.getElementById('raze-input');
       const send = document.getElementById('raze-send');
-      const knowledgeToggle = document.getElementById('raze-knowledge-toggle');
 
       toggle.addEventListener('click', () => this.openChat());
       close.addEventListener('click', () => this.closeChat());
@@ -345,12 +419,6 @@
         }
       });
 
-      knowledgeToggle.addEventListener('click', () => {
-        knowledgeToggle.classList.toggle('active');
-        this.useKnowledge = knowledgeToggle.classList.contains('active');
-      });
-
-      this.useKnowledge = true;
       this.inputElement = input;
       this.sendBtn = send;
     }
@@ -372,38 +440,83 @@
       const messagesDiv = document.getElementById('raze-messages');
       const messageDiv = document.createElement('div');
       messageDiv.className = `raze-message ${role}`;
-      messageDiv.innerHTML = `
-        <div class="raze-message-content">${this.escapeHtml(content)}</div>
-      `;
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'raze-message-content';
+
+      if (role === 'assistant') {
+        contentDiv.innerHTML = this.parseMarkdown(content);
+      } else {
+        contentDiv.textContent = content;
+      }
+
+      messageDiv.appendChild(contentDiv);
       messagesDiv.appendChild(messageDiv);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+      return messageDiv;
+    }
+
+    parseMarkdown(text) {
+      // Escape HTML first
+      let escaped = this.escapeHtml(text);
+
+      // Bold: **text** → <strong>text</strong>
+      escaped = escaped.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+
+      // Italic: *text* → <em>text</em> (but not in bold)
+      escaped = escaped.replace(/\*(.*?)\*/g, '<em>$1</em>');
+
+      // Inline code: `text` → <code>text</code>
+      escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      // Links: [text](url) → <a href="url">text</a>
+      escaped = escaped.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+      // Line breaks
+      escaped = escaped.replace(/\n/g, '<br>');
+
+      return escaped;
     }
 
     async sendMessage() {
       const message = this.inputElement.value.trim();
-      if (!message) return;
+      if (!message || this.isStreaming) return;
 
       // Show user message
       this.addMessage(message, 'user');
       this.inputElement.value = '';
       this.sendBtn.disabled = true;
+      this.isStreaming = true;
 
-      // Show loading
+      // Create assistant message bubble for streaming
       const messagesDiv = document.getElementById('raze-messages');
-      const loadingDiv = document.createElement('div');
-      loadingDiv.className = 'raze-message assistant';
-      loadingDiv.innerHTML = `
-        <div class="raze-loading">
-          <div class="raze-loading-dot"></div>
-          <div class="raze-loading-dot"></div>
-          <div class="raze-loading-dot"></div>
-        </div>
-      `;
-      messagesDiv.appendChild(loadingDiv);
+      const messageDiv = document.createElement('div');
+      messageDiv.className = 'raze-message assistant';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'raze-message-content';
+      contentDiv.textContent = '';
+
+      messageDiv.appendChild(contentDiv);
+      messagesDiv.appendChild(messageDiv);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
 
       try {
-        const response = await fetch(`${API_URL}/api/v1/chat-sdk/chat`, {
+        await this.streamChat(message, contentDiv);
+      } catch (error) {
+        contentDiv.textContent = '❌ Connection error. Please try again.';
+        console.error('Chat error:', error);
+      }
+
+      this.isStreaming = false;
+      this.sendBtn.disabled = false;
+      this.inputElement.focus();
+    }
+
+    async streamChat(message, contentDiv) {
+      try {
+        const response = await fetch(`${API_URL}/api/v1/chat-sdk/chat/stream`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -411,34 +524,67 @@
           },
           body: JSON.stringify({
             message: message,
-            knowledge_ids: Array.from(this.selectedKnowledge),
+            session_id: this.sessionId,
+            knowledge_ids: [],
           }),
         });
 
-        loadingDiv.remove();
-
-        if (response.ok) {
-          const data = await response.json();
-          let displayText = data.response;
-
-          if (data.latency_ms) {
-            displayText += `\n\n📊 Response time: ${data.latency_ms}ms`;
-          }
-
-          this.addMessage(displayText, 'assistant');
-        } else {
+        if (!response.ok) {
           const error = await response.json().catch(() => ({}));
-          const errorMsg = error.detail || 'Failed to get response. Please try again.';
-          this.addMessage(`❌ Error: ${errorMsg}`, 'assistant');
+          const errorMsg = error.detail || 'Failed to get response';
+          contentDiv.innerHTML = `<strong>Error:</strong> ${this.escapeHtml(errorMsg)}`;
+          return;
         }
-      } catch (error) {
-        loadingDiv.remove();
-        this.addMessage('❌ Connection error. Please check your API key and URL.', 'assistant');
-        console.error('Chat error:', error);
-      }
 
-      this.sendBtn.disabled = false;
-      this.inputElement.focus();
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullContent = '';
+        let metadata = null;
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const json = JSON.parse(line.slice(6));
+
+                if (json.event === 'delta' && json.text) {
+                  fullContent += json.text;
+                  contentDiv.innerHTML = this.parseMarkdown(fullContent);
+                  contentDiv.parentElement.parentElement.scrollTop = contentDiv.parentElement.parentElement.scrollHeight;
+                } else if (json.event === 'done') {
+                  metadata = json;
+                }
+              } catch (e) {
+                console.warn('Failed to parse SSE line:', line);
+              }
+            }
+          }
+        }
+
+        // Final render with markdown
+        if (fullContent) {
+          contentDiv.innerHTML = this.parseMarkdown(fullContent);
+        }
+
+        // Store message in state
+        this.messages.push({
+          role: 'assistant',
+          content: fullContent,
+          metadata: metadata,
+        });
+
+      } catch (error) {
+        contentDiv.innerHTML = '<strong>Error:</strong> Connection failed';
+        throw error;
+      }
     }
 
     escapeHtml(text) {

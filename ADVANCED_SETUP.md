@@ -205,6 +205,7 @@ The system will use whichever is configured, with fallback to Mistral.
 - [x] Clone repo
 - [x] Copy `.env.example` to `.env` (or use defaults)
 - [x] Run `docker compose up`
+- [x] Wait for database migrations to run automatically (~1-2 seconds)
 - [x] Wait for Ollama to download models (~10-15 minutes first time)
 - [x] Access http://localhost
 - [x] See setup modal with component status
@@ -213,6 +214,25 @@ The system will use whichever is configured, with fallback to Mistral.
 - [x] Configure brand name, theme, chat welcome message
 - [x] Upload knowledge base documents
 - [x] Start using chat!
+
+## Automatic Database Migrations
+
+Starting fresh deployments automatically apply all Alembic migrations:
+
+1. **PostgreSQL becomes ready** - health check passes
+2. **Backend waits** for healthy database
+3. **db-init.sh runs** - applies all pending migrations via `alembic upgrade head`
+4. **Backend starts** - schema is fully initialized
+5. **App is ready** - no manual SQL needed
+
+**Why this is important:**
+- ✅ Fresh deployments "just work"
+- ✅ New columns are added automatically
+- ✅ No "undefined column" errors
+- ✅ Version control for schema changes
+- ✅ Safe rollbacks if needed
+
+See [MIGRATION_SETUP.md](./MIGRATION_SETUP.md) for detailed migration docs.
 
 ## Troubleshooting
 

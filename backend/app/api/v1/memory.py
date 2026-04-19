@@ -1,11 +1,14 @@
 """Memory management API routes."""
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.api.v1 import deps
 from app.core.memory_engine import MemoryEngine
-from app.database import get_db
+from app.core.vector_search import VectorSearchEngine
+from app.core.llm_router import LLMRouter
+from app.database import get_db, get_redis
 from app.models.memory import Memory, MemoryRetentionPolicy
 from app.schemas.memory import MemoryCreate, MemoryResponse, MemoryUpdate, MemorySearchRequest
 
@@ -36,21 +39,19 @@ async def create_memory(
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create memory."""
+    """Create memory with embeddings and vector storage."""
     await deps.apply_rate_limit(request, "memory_create", 30, 60, current_user)
-    import uuid as _uuid
-    memory = Memory(
-        id=str(_uuid.uuid4()),
+    redis = get_redis()
+    engine = MemoryEngine(db, redis, VectorSearchEngine(), LLMRouter())
+    memory = await engine.store_memory(
         user_id=str(current_user.id),
         session_id=data.session_id,
-        type=data.type,
+        memory_type=data.type.value if hasattr(data.type, 'value') else data.type,
         content=data.content,
         importance_score=data.importance_score if data.importance_score is not None else 0.5,
-        is_active=True,
+        metadata=data.mem_metadata,
     )
-    db.add(memory)
     await db.commit()
-    await db.refresh(memory)
     return memory
 
 @router.get("/{memory_id}", response_model=MemoryResponse)
@@ -64,12 +65,18 @@ async def get_memory(
     await deps.apply_rate_limit(request, "memory_get", 30, 60, current_user)
     result = await db.execute(
         select(Memory).where(
-            (Memory.id == memory_id) & (Memory.user_id == current_user.id)
+            (Memory.id == memory_id) & (Memory.user_id == str(current_user.id))
         )
     )
     memory = result.scalar_one_or_none()
     if not memory:
         raise HTTPException(status_code=404, detail="Memory not found")
+
+    # Update access tracking
+    memory.access_count = (memory.access_count or 0) + 1
+    memory.last_accessed = datetime.utcnow()
+    await db.commit()
+
     return memory
 
 @router.put("/{memory_id}", response_model=MemoryResponse)
@@ -77,15 +84,19 @@ async def update_memory(
     memory_id: str,
     data: MemoryUpdate,
     request: Request,
-    current_user = Depends(deps.get_current_admin),
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update memory."""
+    """Update memory - user can update their own memories."""
     await deps.apply_rate_limit(request, "memory_update", 30, 60, current_user)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id))
+    result = await db.execute(
+        select(Memory).where(
+            (Memory.id == memory_id) & (Memory.user_id == str(current_user.id))
+        )
+    )
     memory = result.scalar_one_or_none()
     if not memory:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Memory not found")
 
     if data.importance_score is not None:
         memory.importance_score = data.importance_score
@@ -99,15 +110,19 @@ async def update_memory(
 async def delete_memory(
     memory_id: str,
     request: Request,
-    current_user = Depends(deps.get_current_admin),
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete memory."""
+    """Delete memory - user can delete their own memories."""
     await deps.apply_rate_limit(request, "memory_delete", 30, 60, current_user)
-    result = await db.execute(select(Memory).where(Memory.id == memory_id))
+    result = await db.execute(
+        select(Memory).where(
+            (Memory.id == memory_id) & (Memory.user_id == str(current_user.id))
+        )
+    )
     memory = result.scalar_one_or_none()
     if not memory:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Memory not found")
 
     memory.is_active = False
     await db.commit()
@@ -122,15 +137,25 @@ async def search_memories(
 ):
     """Semantic search memories for current user."""
     await deps.apply_rate_limit(request, "memory_search", 30, 60, current_user)
-    stmt = select(Memory).where(
-        Memory.user_id == current_user.id,
-        Memory.is_active == True,
+    redis = get_redis()
+    engine = MemoryEngine(db, redis, VectorSearchEngine(), LLMRouter())
+
+    results = await engine.search_memories(
+        user_id=str(current_user.id),
+        query=data.query,
+        memory_types=[t.value if hasattr(t, 'value') else t for t in data.types] if data.types else None,
+        top_k=data.limit or 20,
+        min_importance=data.min_importance or 0.0,
     )
-    if data.query:
-        stmt = stmt.where(Memory.content.ilike(f"%{data.query}%"))
-    stmt = stmt.order_by(Memory.importance_score.desc()).limit(20)
-    result = await db.execute(stmt)
-    return {"results": result.scalars().all()}
+
+    # Update access tracking for returned items
+    now = datetime.utcnow()
+    for mem in results:
+        mem.access_count = (mem.access_count or 0) + 1
+        mem.last_accessed = now
+    await db.commit()
+
+    return {"results": results, "total_found": len(results)}
 
 @router.get("/sessions/{session_id}")
 async def get_session_context(
@@ -143,19 +168,44 @@ async def get_session_context(
     await deps.apply_rate_limit(request, "memory_session_get", 30, 60, current_user)
     stmt = select(Memory).where(
         Memory.session_id == session_id,
-        Memory.user_id == current_user.id,
+        Memory.user_id == str(current_user.id),
         Memory.is_active == True,
     ).order_by(Memory.created_at.asc())
     result = await db.execute(stmt)
     return {"messages": result.scalars().all()}
 
+
+@router.get("/retention-policies")
+async def get_retention_policies(
+    request: Request,
+    current_user = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all active retention policies."""
+    await deps.apply_rate_limit(request, "memory_policies", 30, 60, current_user)
+    stmt = select(MemoryRetentionPolicy).where(MemoryRetentionPolicy.is_active == True)
+    result = await db.execute(stmt)
+    policies = result.scalars().all()
+    return {"policies": policies}
+
 @router.delete("/sessions/{session_id}")
 async def clear_session_context(
     session_id: str,
     request: Request,
-    current_user = Depends(deps.get_current_admin),
+    current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Clear session context."""
+    """Clear session context - user can clear their own sessions."""
     await deps.apply_rate_limit(request, "memory_session_clear", 30, 60, current_user)
+    redis = get_redis()
+    engine = MemoryEngine(db, redis, VectorSearchEngine(), LLMRouter())
+    await engine.clear_context(session_id)
+
+    # Also soft-delete session memories in DB
+    stmt = update(Memory).where(
+        (Memory.session_id == session_id) & (Memory.user_id == str(current_user.id))
+    ).values(is_active=False)
+    await db.execute(stmt)
+    await db.commit()
+
     return {"cleared": True}

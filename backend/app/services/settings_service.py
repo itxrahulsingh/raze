@@ -81,6 +81,13 @@ class SettingsService:
                 "web_search_engine": settings.web_search_engine,
                 "web_search_max_results": settings.web_search_max_results,
                 "include_web_search_in_chat": settings.include_web_search_in_chat,
+                # Industry configuration
+                "company_name": settings.company_name,
+                "industry_name": settings.industry_name,
+                "industry_topics": json.loads(settings.industry_topics) if isinstance(settings.industry_topics, str) else settings.industry_topics,
+                "industry_tone": settings.industry_tone,
+                "industry_restriction_mode": settings.industry_restriction_mode,
+                "industry_system_prompt": settings.industry_system_prompt,
             }
 
             try:
@@ -156,5 +163,12 @@ class SettingsService:
             "web_search_engine": "duckduckgo",
             "web_search_max_results": 5,
             "include_web_search_in_chat": True,
+            # Industry defaults (empty until configured)
+            "company_name": None,
+            "industry_name": None,
+            "industry_topics": None,
+            "industry_tone": "friendly",
+            "industry_restriction_mode": "strict",
+            "industry_system_prompt": None,
         }
         return await self.update_settings(defaults)

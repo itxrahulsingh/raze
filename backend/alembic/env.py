@@ -28,9 +28,16 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode."""
-    settings = get_settings()
+    # Try to use environment variable first (for container migrations)
+    # Fall back to settings from config.py
+    sqlalchemy_url = os.environ.get("SQLALCHEMY_URL")
+    if not sqlalchemy_url:
+        settings = get_settings()
+        # Convert async URL to sync URL for offline migrations
+        sqlalchemy_url = settings.sync_database_url
+
     configuration = config.get_section(config.config_ini_section)
-    configuration["sqlalchemy.url"] = settings.database_url
+    configuration["sqlalchemy.url"] = sqlalchemy_url
 
     connectable = engine_from_config(
         configuration,

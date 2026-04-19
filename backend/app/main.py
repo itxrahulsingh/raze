@@ -1,11 +1,14 @@
 """
 RAZE Enterprise AI OS - FastAPI Application Entry Point
 """
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
 import structlog
 
 from app.config import get_settings
@@ -37,6 +40,35 @@ structlog.configure(
 logger = structlog.get_logger(__name__)
 
 
+async def _memory_decay_loop():
+    """Background loop for memory decay and pruning every 24 hours."""
+    from app.core.background_tasks import run_all_background_tasks
+    while True:
+        try:
+            await asyncio.sleep(86400)  # 24 hours
+            logger.info("memory_decay_loop.starting")
+            await run_all_background_tasks()
+            logger.info("memory_decay_loop.completed")
+        except asyncio.CancelledError:
+            logger.info("memory_decay_loop.cancelled")
+            break
+        except Exception as e:
+            logger.error("memory_decay_loop.error", error=str(e))
+
+
+class SDKCORSMiddleware(BaseHTTPMiddleware):
+    """Targeted CORS middleware for SDK routes - allows * on SDK endpoints only."""
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        # Allow CORS for SDK chat and config endpoints
+        if (request.url.path.startswith("/api/v1/chat-sdk/chat") or
+            request.url.path == "/api/v1/chat-sdk/config"):
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "X-API-Key, Content-Type"
+            response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+        return response
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context for startup and shutdown."""
@@ -45,6 +77,9 @@ async def lifespan(app: FastAPI):
     # Startup
     await connect_db()
     await connect_redis()
+
+    # Start memory decay background loop
+    decay_task = asyncio.create_task(_memory_decay_loop())
 
     # Initialize Qdrant collections (non-blocking; retries on first request if unavailable)
     try:
@@ -95,6 +130,11 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down RAZE AI OS...")
+    decay_task.cancel()
+    try:
+        await asyncio.gather(decay_task, return_exceptions=True)
+    except Exception:
+        pass
     await disconnect_db()
     await disconnect_redis()
     logger.info("RAZE AI OS shut down successfully")
@@ -110,6 +150,9 @@ app = FastAPI(
 
 # Add middlewares (order matters: innermost added first)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+# SDK CORS middleware (before global CORS) to allow * on SDK endpoints
+app.add_middleware(SDKCORSMiddleware)
+# Global CORS middleware for dashboard and other routes
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.allowed_origins,

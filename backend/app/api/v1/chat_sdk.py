@@ -10,19 +10,30 @@ from typing import Any, AsyncGenerator
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.chat_domain import ChatDomain, DomainStatus
 from app.models.user import User
+from app.models.settings import AppSettings
 from app.api.v1 import deps
 from app.models.conversation import Message, MessageRole
 from app.schemas.chat import StreamChunk, StreamEventType
 from app.database import AsyncSessionLocal
+from app.core.prompt_builder import build_industry_system_prompt
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat-sdk", tags=["Chat SDK"])
+
+
+# Request schemas
+class SDKChatRequest(BaseModel):
+    """Chat request from SDK widget."""
+    message: str
+    session_id: str | None = None
+    knowledge_ids: list[str] = []
 
 
 def _generate_api_key(length: int = 32) -> str:
@@ -262,8 +273,7 @@ async def delete_domain(
 @router.post("/chat")
 async def chat_with_knowledge(
     request: Request,
-    message: str = None,
-    knowledge_ids: list[str] = None,
+    body: SDKChatRequest,
     x_api_key: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -271,7 +281,7 @@ async def chat_with_knowledge(
     from app.core.chat_engine import ChatEngine
     from app.database import get_redis
 
-    if not x_api_key or not message:
+    if not x_api_key or not body.message:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="API key and message required",
@@ -300,11 +310,37 @@ async def chat_with_knowledge(
     domain.last_used = datetime.now(UTC)
     await db.commit()
 
+    # Per-visitor session isolation
+    session_id = body.session_id or f"sdk_{uuid.uuid4().hex[:8]}"
+
     logger.info(
         "chat_sdk.message_received",
         domain=domain.domain,
-        knowledge_ids=knowledge_ids,
+        knowledge_ids=body.knowledge_ids,
+        session_id=session_id,
     )
+
+    # Load industry config and build system prompt
+    system_prompt_override = None
+    try:
+        settings_result = await db.execute(
+            select(AppSettings).where(AppSettings.id == "singleton")
+        )
+        settings = settings_result.scalars().first()
+        if settings:
+            if settings.industry_system_prompt:
+                system_prompt_override = settings.industry_system_prompt
+            elif settings.industry_name:
+                topics = json.loads(settings.industry_topics) if isinstance(settings.industry_topics, str) else settings.industry_topics or []
+                system_prompt_override = build_industry_system_prompt(
+                    industry_name=settings.industry_name,
+                    topics=topics,
+                    tone=settings.industry_tone,
+                    restriction_mode=settings.industry_restriction_mode,
+                    company_name=settings.company_name
+                )
+    except Exception as e:
+        logger.warning("chat_sdk.settings_load_error", error=str(e))
 
     # Process with ChatEngine
     start_ts = time.monotonic()
@@ -319,17 +355,18 @@ async def chat_with_knowledge(
         # Generate a temporary conversation ID for SDK (no message persistence)
         temp_conversation_id = uuid.uuid4()
         result = await engine.process(
-            message=message,
+            message=body.message,
             conversation_id=temp_conversation_id,
-            session_id=f"sdk_{domain.id}",
+            session_id=session_id,
             user_id=None,
             ai_config_id=None,
-            use_knowledge=bool(knowledge_ids),
+            use_knowledge=bool(body.knowledge_ids),
             use_memory=False,
-            tools_enabled=False,
+            tools_enabled=True,
             allowed_tools=None,
-            context={"domain": domain.domain, "knowledge_ids": knowledge_ids or []},
+            context={"domain": domain.domain, "knowledge_ids": body.knowledge_ids},
             history=None,
+            system_prompt_override=system_prompt_override,
         )
         ai_content = result.get("content", ai_content)
         model_used = result.get("model_used", "unknown")
@@ -349,6 +386,7 @@ async def chat_with_knowledge(
         "latency_ms": latency_ms,
         "sources": [],
         "timestamp": datetime.now(UTC).isoformat(),
+        "session_id": session_id,
     }
 
 
@@ -361,8 +399,7 @@ def _sse_line(chunk: StreamChunk) -> str:
 async def stream_chat_with_knowledge(
     request: Request,
     background_tasks: BackgroundTasks,
-    message: str = None,
-    knowledge_ids: list[str] = None,
+    body: SDKChatRequest,
     x_api_key: str = Header(None),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
@@ -370,7 +407,7 @@ async def stream_chat_with_knowledge(
     from app.core.chat_engine import ChatEngine
     from app.database import get_redis
 
-    if not x_api_key or not message:
+    if not x_api_key or not body.message:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="API key and message required",
@@ -399,10 +436,36 @@ async def stream_chat_with_knowledge(
     domain.last_used = datetime.now(UTC)
     await db.commit()
 
+    # Per-visitor session isolation
+    session_id = body.session_id or f"sdk_{uuid.uuid4().hex[:8]}"
+
+    # Load industry config and build system prompt
+    system_prompt_override = None
+    try:
+        settings_result = await db.execute(
+            select(AppSettings).where(AppSettings.id == "singleton")
+        )
+        settings = settings_result.scalars().first()
+        if settings:
+            if settings.industry_system_prompt:
+                system_prompt_override = settings.industry_system_prompt
+            elif settings.industry_name:
+                topics = json.loads(settings.industry_topics) if isinstance(settings.industry_topics, str) else settings.industry_topics or []
+                system_prompt_override = build_industry_system_prompt(
+                    industry_name=settings.industry_name,
+                    topics=topics,
+                    tone=settings.industry_tone,
+                    restriction_mode=settings.industry_restriction_mode,
+                    company_name=settings.company_name
+                )
+    except Exception as e:
+        logger.warning("chat_sdk.settings_load_error", error=str(e))
+
     logger.info(
         "chat_sdk.stream_started",
         domain=domain.domain,
-        knowledge_ids=knowledge_ids,
+        knowledge_ids=body.knowledge_ids,
+        session_id=session_id,
     )
 
     msg_id = uuid.uuid4()
@@ -430,19 +493,19 @@ async def stream_chat_with_knowledge(
         try:
             redis_client = get_redis()
             engine = ChatEngine(db=db, redis=redis_client)
-            session_id = f"sdk_{domain.id}"
 
             async for delta in engine.stream(
-                message=message,
+                message=body.message,
                 conversation_id=conv_id,
                 session_id=session_id,
                 user_id=None,
                 ai_config_id=None,
-                use_knowledge=bool(knowledge_ids),
+                use_knowledge=bool(body.knowledge_ids),
                 use_memory=False,
-                tools_enabled=False,
+                tools_enabled=True,
                 allowed_tools=None,
-                context={"domain": domain.domain, "knowledge_ids": knowledge_ids or []},
+                context={"domain": domain.domain, "knowledge_ids": body.knowledge_ids},
+                system_prompt_override=system_prompt_override,
             ):
                 if delta.get("type") == "text":
                     text_chunk = delta["content"]
@@ -492,3 +555,68 @@ async def stream_chat_with_knowledge(
             "Connection": "keep-alive",
         },
     )
+
+
+@router.get("/chat-sdk/config")
+async def get_sdk_config(
+    x_api_key: str = Header(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Get SDK widget configuration (requires valid API key)."""
+    if not x_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API key required",
+        )
+
+    # Hash and verify API key
+    api_key_hash = _hash_api_key(x_api_key)
+    result = await db.execute(
+        select(ChatDomain).where(ChatDomain.api_key == api_key_hash)
+    )
+    domain = result.scalar_one_or_none()
+
+    if not domain or not domain.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or inactive API key",
+        )
+
+    if domain.status != DomainStatus.approved.value:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Domain not approved",
+        )
+
+    # Get default brand config from AppSettings
+    settings_result = await db.execute(
+        select(AppSettings).where(AppSettings.id == "singleton")
+    )
+    settings = settings_result.scalars().first()
+
+    return {
+        "bot_name": domain.bot_name or (settings.brand_name if settings else "Assistant"),
+        "welcome_message": domain.welcome_message or "How can I help you today?",
+        "widget_color": settings.primary_color if settings else "#007bff",
+        "show_knowledge_sources": True,
+        "domain": domain.domain,
+        "display_name": domain.display_name,
+    }
+
+
+@router.options("/chat")
+async def chat_preflight():
+    """Preflight handler for /chat endpoint."""
+    return {}
+
+
+@router.options("/chat/stream")
+async def chat_stream_preflight():
+    """Preflight handler for /chat/stream endpoint."""
+    return {}
+
+
+@router.options("/chat-sdk/config")
+async def config_preflight():
+    """Preflight handler for /config endpoint."""
+    return {}

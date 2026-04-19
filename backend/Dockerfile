@@ -22,6 +22,10 @@ RUN chown -R raze:raze /app
 
 USER raze
 
-# Database tables are created automatically during app startup via ORM metadata.create_all()
-# uvicorn starts the API (using 1 worker initially to avoid race conditions during table creation)
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Copy database initialization script
+COPY --chown=raze:raze db-init.sh /app/db-init.sh
+RUN chmod +x /app/db-init.sh
+
+# Database tables and schema are managed via Alembic migrations
+# db-init.sh runs migrations, then uvicorn starts the API
+CMD ["/bin/sh", "-c", "/app/db-init.sh && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --proxy-headers --forwarded-allow-ips=*"]

@@ -38,6 +38,8 @@ interface ChatDomain {
   id: string
   domain: string
   display_name: string
+  bot_name?: string
+  welcome_message?: string
   status: string
   is_active: boolean
   created_at: string
@@ -71,6 +73,8 @@ export default function ChatSDKPage() {
     domain: '',
     display_name: '',
     description: '',
+    bot_name: '',
+    welcome_message: '',
   })
   const [secretsByDomain, setSecretsByDomain] = useState<Record<string, DomainSecretState>>({})
   const [activeSecretDomainId, setActiveSecretDomainId] = useState<string | null>(null)
@@ -176,7 +180,7 @@ export default function ChatSDKPage() {
       const created = data as RegisterResponse
       setSecret(created.domain_id, created.api_key)
       toast.success('Domain registered. API key generated.')
-      setFormData({ domain: '', display_name: '', description: '' })
+      setFormData({ domain: '', display_name: '', description: '', bot_name: '', welcome_message: '' })
       setShowNewDomain(false)
       await fetchDomains()
     } catch (err) {
@@ -341,6 +345,11 @@ export default function ChatSDKPage() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <p className="font-semibold">{domain.display_name}</p>
+                        {domain.bot_name && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            Bot: <strong>{domain.bot_name}</strong>
+                          </p>
+                        )}
                         <p className="mt-1 flex items-center text-sm text-muted-foreground">
                           <Globe className="mr-1.5 h-3.5 w-3.5" />
                           {domain.domain}
@@ -466,7 +475,7 @@ export default function ChatSDKPage() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Register New Domain</DialogTitle>
-            <DialogDescription>Create controlled SDK access for a website origin.</DialogDescription>
+            <DialogDescription>Create controlled SDK access for a website origin and customize widget branding.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <Input
@@ -478,6 +487,17 @@ export default function ChatSDKPage() {
               placeholder="Display name"
               value={formData.display_name}
               onChange={(event) => setFormData((prev) => ({ ...prev, display_name: event.target.value }))}
+            />
+            <Input
+              placeholder="Bot Name (e.g., Aria, Assistant)"
+              value={formData.bot_name}
+              onChange={(event) => setFormData((prev) => ({ ...prev, bot_name: event.target.value }))}
+            />
+            <Textarea
+              placeholder="Welcome Message (optional)"
+              rows={2}
+              value={formData.welcome_message}
+              onChange={(event) => setFormData((prev) => ({ ...prev, welcome_message: event.target.value }))}
             />
             <Textarea
               placeholder="Description (optional)"
