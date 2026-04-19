@@ -47,6 +47,16 @@ def _hash_api_key(api_key: str) -> str:
     return hashlib.sha256(api_key.encode()).hexdigest()
 
 
+def _normalize_domain(value: str) -> str:
+    """Normalize domain input to a bare hostname."""
+    raw = (value or "").strip().lower()
+    if not raw:
+        return ""
+    parsed = urlparse(raw if "://" in raw else f"http://{raw}")
+    host = (parsed.hostname or "").strip().lower()
+    return host
+
+
 def _is_origin_allowed(origin: str | None, domain: str) -> bool:
     """Validate browser Origin against approved SDK domain."""
     if not origin:
@@ -55,7 +65,9 @@ def _is_origin_allowed(origin: str | None, domain: str) -> bool:
         host = (urlparse(origin).hostname or "").lower()
     except Exception:
         return False
-    allowed = domain.lower()
+    allowed = _normalize_domain(domain)
+    if not allowed:
+        return False
     return host == allowed or host.endswith(f".{allowed}")
 
 
@@ -70,6 +82,10 @@ def _cors_headers(origin: str | None) -> dict[str, str]:
     }
 
 
+def _cors_http_exception(status_code: int, detail: str, origin: str | None) -> HTTPException:
+    return HTTPException(status_code=status_code, detail=detail, headers=_cors_headers(origin))
+
+
 @router.post("/domains")
 async def register_domain(
     request: Request,
@@ -80,7 +96,7 @@ async def register_domain(
     """Register a new domain for chat SDK (admin only)."""
     await deps.apply_rate_limit(request, "register_domain", 60, 60, current_user)
 
-    domain = domain_data.get("domain", "").lower().strip()
+    domain = _normalize_domain(domain_data.get("domain", ""))
     display_name = domain_data.get("display_name", "")
 
     if not domain or not display_name:
@@ -307,10 +323,7 @@ async def chat_with_knowledge(
     from app.database import get_redis
 
     if not x_api_key or not body.message:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="API key and message required",
-        )
+        raise _cors_http_exception(status.HTTP_400_BAD_REQUEST, "API key and message required", origin)
 
     # Hash and verify API key
     api_key_hash = _hash_api_key(x_api_key)
@@ -320,21 +333,12 @@ async def chat_with_knowledge(
     domain = result.scalar_one_or_none()
 
     if not domain or not domain.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or inactive API key",
-        )
+        raise _cors_http_exception(status.HTTP_401_UNAUTHORIZED, "Invalid or inactive API key", origin)
 
     if domain.status != DomainStatus.approved.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Domain not approved for chat",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Domain not approved for chat", origin)
     if origin and not _is_origin_allowed(origin, domain.domain):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Origin not allowed for this SDK domain",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Origin not allowed for this SDK domain", origin)
 
     # Update last used
     domain.last_used = datetime.now(UTC)
@@ -442,10 +446,7 @@ async def stream_chat_with_knowledge(
     from app.database import get_redis
 
     if not x_api_key or not body.message:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="API key and message required",
-        )
+        raise _cors_http_exception(status.HTTP_400_BAD_REQUEST, "API key and message required", origin)
 
     # Hash and verify API key
     api_key_hash = _hash_api_key(x_api_key)
@@ -455,21 +456,12 @@ async def stream_chat_with_knowledge(
     domain = result.scalar_one_or_none()
 
     if not domain or not domain.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or inactive API key",
-        )
+        raise _cors_http_exception(status.HTTP_401_UNAUTHORIZED, "Invalid or inactive API key", origin)
 
     if domain.status != DomainStatus.approved.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Domain not approved for chat",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Domain not approved for chat", origin)
     if origin and not _is_origin_allowed(origin, domain.domain):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Origin not allowed for this SDK domain",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Origin not allowed for this SDK domain", origin)
 
     # Update last used
     domain.last_used = datetime.now(UTC)
@@ -605,10 +597,7 @@ async def get_sdk_config(
 ) -> dict:
     """Get SDK widget configuration (requires valid API key)."""
     if not x_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="API key required",
-        )
+        raise _cors_http_exception(status.HTTP_401_UNAUTHORIZED, "API key required", origin)
 
     # Hash and verify API key
     api_key_hash = _hash_api_key(x_api_key)
@@ -618,21 +607,12 @@ async def get_sdk_config(
     domain = result.scalar_one_or_none()
 
     if not domain or not domain.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or inactive API key",
-        )
+        raise _cors_http_exception(status.HTTP_401_UNAUTHORIZED, "Invalid or inactive API key", origin)
 
     if domain.status != DomainStatus.approved.value:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Domain not approved",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Domain not approved", origin)
     if origin and not _is_origin_allowed(origin, domain.domain):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Origin not allowed for this SDK domain",
-        )
+        raise _cors_http_exception(status.HTTP_403_FORBIDDEN, "Origin not allowed for this SDK domain", origin)
 
     # Get default brand config from AppSettings
     settings_result = await db.execute(
