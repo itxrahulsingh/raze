@@ -25,7 +25,19 @@
   const CONFIG = window.RAZE_CONFIG || {};
   const API_KEY = CONFIG.apiKey;
   const RAW_API_URL = CONFIG.apiUrl || 'http://localhost:8000';
-  const API_URL = RAW_API_URL.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
+  const BASE_API_URL = RAW_API_URL.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
+  const API_URL = (function normalizeApiUrl() {
+    try {
+      const parsed = new URL(BASE_API_URL, window.location.origin);
+      // Avoid mixed-content errors on HTTPS host pages.
+      if (window.location.protocol === 'https:' && parsed.protocol === 'http:' && !CONFIG.allowInsecureHttp) {
+        parsed.protocol = 'https:';
+      }
+      return parsed.toString().replace(/\/$/, '');
+    } catch (_) {
+      return BASE_API_URL;
+    }
+  })();
   const POSITION = CONFIG.position || 'bottom-right';
 
   if (!API_KEY) {
@@ -63,16 +75,18 @@
 
     async loadConfig() {
       try {
-        const response = await fetch(`${API_URL}/api/v1/chat-sdk/config`, {
+        const response = await this.fetchWithRetry(`${API_URL}/api/v1/chat-sdk/config`, {
           method: 'GET',
           headers: {
             'X-API-Key': API_KEY,
           },
-        });
+        }, 2);
         if (response.ok) {
           this.config = await response.json();
           return true;
         }
+        const errorText = await response.text().catch(() => '');
+        console.warn(`Widget config request failed (${response.status}):`, errorText);
       } catch (error) {
         console.warn('Failed to load widget config:', error);
       }
@@ -84,6 +98,21 @@
         show_knowledge_sources: true,
       };
       return false;
+    }
+
+    async fetchWithRetry(url, options, retries = 1) {
+      let lastError;
+      for (let i = 0; i <= retries; i++) {
+        try {
+          const res = await fetch(url, options);
+          if (res.ok || i === retries) return res;
+        } catch (error) {
+          lastError = error;
+          if (i === retries) throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 400 * (i + 1)));
+      }
+      throw lastError || new Error('Request failed');
     }
 
     createStyles() {
@@ -517,7 +546,7 @@
 
     async streamChat(message, contentDiv) {
       try {
-        const response = await fetch(`${API_URL}/api/v1/chat-sdk/chat/stream`, {
+        const response = await this.fetchWithRetry(`${API_URL}/api/v1/chat-sdk/chat/stream`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -528,7 +557,7 @@
             session_id: this.sessionId,
             knowledge_ids: [],
           }),
-        });
+        }, 1);
 
         if (!response.ok) {
           const error = await response.json().catch(() => ({}));
