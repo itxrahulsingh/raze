@@ -570,7 +570,28 @@
         const decoder = new TextDecoder();
         let buffer = '';
         let fullContent = '';
+        let pendingText = '';
         let metadata = null;
+        let rafScheduled = false;
+
+        const flush = () => {
+          if (!pendingText) return;
+          fullContent += pendingText;
+          pendingText = '';
+          // Render raw text while streaming for speed; markdown on final.
+          contentDiv.textContent = fullContent;
+          const messagesDiv = document.getElementById('raze-messages');
+          if (messagesDiv) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        };
+
+        const scheduleFlush = () => {
+          if (rafScheduled) return;
+          rafScheduled = true;
+          requestAnimationFrame(() => {
+            rafScheduled = false;
+            flush();
+          });
+        };
 
         while (true) {
           const { done, value } = await reader.read();
@@ -586,9 +607,8 @@
                 const json = JSON.parse(line.slice(6));
 
                 if (json.event === 'delta' && json.text) {
-                  fullContent += json.text;
-                  contentDiv.innerHTML = this.parseMarkdown(fullContent);
-                  contentDiv.parentElement.parentElement.scrollTop = contentDiv.parentElement.parentElement.scrollHeight;
+                  pendingText += json.text;
+                  scheduleFlush();
                 } else if (json.event === 'done') {
                   metadata = json;
                 }
@@ -598,6 +618,9 @@
             }
           }
         }
+
+        // Flush any remaining buffered tokens.
+        flush();
 
         // Final render with markdown
         if (fullContent) {
