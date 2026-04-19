@@ -647,6 +647,41 @@ async def delete_conversation(
     logger.info("chat.conversation_deleted", conversation_id=str(conversation_id))
 
 
+@router.put(
+    "/conversations/{conversation_id}/title",
+    response_model=ConversationResponse,
+    summary="Rename/update conversation title",
+)
+async def update_conversation_title(
+    conversation_id: uuid.UUID,
+    request_body: dict,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConversationResponse:
+    """Update conversation title."""
+    title = request_body.get("title", "").strip()
+    if not title:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title cannot be empty")
+    if len(title) > 255:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Title too long (max 255 chars)")
+
+    result = await db.execute(
+        select(Conversation).where(Conversation.id == conversation_id)
+    )
+    conv = result.scalars().first()
+    if not conv:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+
+    if conv.user_id and conv.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    conv.title = title
+    await db.commit()
+    await db.refresh(conv)
+    logger.info("chat.conversation_renamed", conversation_id=str(conversation_id), new_title=title)
+    return ConversationResponse.model_validate(conv)
+
+
 # ─── GET /chat/conversations/{id}/messages ────────────────────────────────────
 
 
