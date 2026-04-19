@@ -115,9 +115,9 @@ async def _upsert_session(
     ip_address = request.client.host if request.client else None
 
     existing = await db.execute(
-        select(UserSession).where(UserSession.session_id == session_id)
+        select(UserSession).where(UserSession.session_id == session_id).order_by(UserSession.created_at.desc()).limit(1)
     )
-    us: UserSession | None = existing.scalar_one_or_none()
+    us: UserSession | None = existing.scalars().first()
 
     now = datetime.now(UTC)
     if us is None:
