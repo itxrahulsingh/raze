@@ -45,9 +45,11 @@ done
 
 echo "✓ PostgreSQL is ready"
 
-# Alembic migrations - skip automatic run since app ORM creates tables on startup
-# Tables are created by the application startup using ORM metadata
-echo "✓ Tables will be created by application ORM on startup"
+# Run Alembic migrations to keep schema in sync with backend code.
+echo "Running Alembic migrations..."
+export DATABASE_URL="$SYNC_DATABASE_URL"
+alembic upgrade head
+echo "✓ Alembic migrations applied"
 
 echo "=========================================="
 echo "Database initialization complete"

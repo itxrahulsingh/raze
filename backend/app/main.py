@@ -7,8 +7,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request as StarletteRequest
 import structlog
 
 from app.config import get_settings
@@ -54,19 +52,6 @@ async def _memory_decay_loop():
             break
         except Exception as e:
             logger.error("memory_decay_loop.error", error=str(e))
-
-
-class SDKCORSMiddleware(BaseHTTPMiddleware):
-    """Targeted CORS middleware for SDK routes - allows * on SDK endpoints only."""
-    async def dispatch(self, request: StarletteRequest, call_next):
-        response = await call_next(request)
-        # Allow CORS for SDK chat and config endpoints
-        if (request.url.path.startswith("/api/v1/chat-sdk/chat") or
-            request.url.path == "/api/v1/chat-sdk/config"):
-            response.headers["Access-Control-Allow-Origin"] = "*"
-            response.headers["Access-Control-Allow-Headers"] = "X-API-Key, Content-Type"
-            response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
-        return response
 
 
 @asynccontextmanager
@@ -150,8 +135,6 @@ app = FastAPI(
 
 # Add middlewares (order matters: innermost added first)
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-# SDK CORS middleware (before global CORS) to allow * on SDK endpoints
-app.add_middleware(SDKCORSMiddleware)
 # Global CORS middleware for dashboard and other routes
 app.add_middleware(
     CORSMiddleware,

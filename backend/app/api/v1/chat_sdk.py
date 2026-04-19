@@ -19,6 +19,7 @@ from app.database import get_db
 from app.models.chat_domain import ChatDomain, DomainStatus
 from app.models.user import User
 from app.models.settings import AppSettings
+from app.config import get_settings
 from app.api.v1 import deps
 from app.models.conversation import Message, MessageRole
 from app.schemas.chat import StreamChunk, StreamEventType
@@ -27,6 +28,7 @@ from app.core.prompt_builder import build_industry_system_prompt
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(prefix="/chat-sdk", tags=["Chat SDK"])
+settings = get_settings()
 
 
 # Request schemas
@@ -59,6 +61,8 @@ def _normalize_domain(value: str) -> str:
 
 def _is_origin_allowed(origin: str | None, domain: str) -> bool:
     """Validate browser Origin against approved SDK domain."""
+    if settings.chat_sdk_allow_all_origins:
+        return True
     if not origin:
         return False
     try:
@@ -72,6 +76,14 @@ def _is_origin_allowed(origin: str | None, domain: str) -> bool:
 
 
 def _cors_headers(origin: str | None) -> dict[str, str]:
+    if settings.chat_sdk_allow_all_origins:
+        return {
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Credentials": "false",
+            "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Vary": "Origin",
+        }
     safe_origin = origin or "*"
     return {
         "Access-Control-Allow-Origin": safe_origin,

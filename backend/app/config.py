@@ -203,6 +203,7 @@ class Settings(BaseSettings):
     feature_analytics: bool = True
     feature_multi_model_routing: bool = True
     feature_sdk_mode: bool = True
+    chat_sdk_allow_all_origins: bool = False
 
     # ── Observability ─────────────────────────────────────────────────────────
     prometheus_enabled: bool = True
