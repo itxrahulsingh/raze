@@ -49,23 +49,48 @@ async def save_ai_config(
     await deps.apply_rate_limit(request, "save_ai_config", 60, 60, current_user)
 
     try:
+        from sqlalchemy import select, update
+
         # Create or update AI config in database
-        ai_config = AIConfig(
-            id=uuid.uuid4(),
-            name=config.get("name", f"{config.get('provider', 'openai')} - {config.get('model_name', 'default')}"),
-            provider=config.get("provider", "openai"),
-            model_name=config.get("model_name", "gpt-4-turbo"),
-            temperature=float(config.get("temperature", 0.7)),
-            max_tokens=int(config.get("max_tokens", 2048)),
-            top_p=float(config.get("top_p", 1.0)),
-            is_default=bool(config.get("is_default", False)),
-            is_active=True,
-            streaming_enabled=bool(config.get("streaming_enabled", True)),
-            tool_calling_enabled=bool(config.get("tool_calling_enabled", True)),
-            memory_enabled=bool(config.get("memory_enabled", True)),
-            knowledge_enabled=bool(config.get("knowledge_enabled", True)),
-        )
-        db.add(ai_config)
+        config_name = config.get("name", f"{config.get('provider', 'openai')} - {config.get('model_name', 'default')}")
+
+        # Check if config already exists
+        result = await db.execute(select(AIConfig).where(AIConfig.name == config_name).limit(1))
+        existing_config = result.scalars().first()
+
+        if existing_config:
+            # Update existing config
+            existing_config.provider = config.get("provider", existing_config.provider)
+            existing_config.model_name = config.get("model_name", existing_config.model_name)
+            existing_config.temperature = float(config.get("temperature", existing_config.temperature))
+            existing_config.max_tokens = int(config.get("max_tokens", existing_config.max_tokens))
+            existing_config.top_p = float(config.get("top_p", existing_config.top_p))
+            existing_config.is_default = bool(config.get("is_default", existing_config.is_default))
+            existing_config.is_active = True
+            existing_config.streaming_enabled = bool(config.get("streaming_enabled", existing_config.streaming_enabled))
+            existing_config.tool_calling_enabled = bool(config.get("tool_calling_enabled", existing_config.tool_calling_enabled))
+            existing_config.memory_enabled = bool(config.get("memory_enabled", existing_config.memory_enabled))
+            existing_config.knowledge_enabled = bool(config.get("knowledge_enabled", existing_config.knowledge_enabled))
+            ai_config = existing_config
+        else:
+            # Create new config
+            ai_config = AIConfig(
+                id=uuid.uuid4(),
+                name=config_name,
+                provider=config.get("provider", "openai"),
+                model_name=config.get("model_name", "gpt-4-turbo"),
+                temperature=float(config.get("temperature", 0.7)),
+                max_tokens=int(config.get("max_tokens", 2048)),
+                top_p=float(config.get("top_p", 1.0)),
+                is_default=bool(config.get("is_default", False)),
+                is_active=True,
+                streaming_enabled=bool(config.get("streaming_enabled", True)),
+                tool_calling_enabled=bool(config.get("tool_calling_enabled", True)),
+                memory_enabled=bool(config.get("memory_enabled", True)),
+                knowledge_enabled=bool(config.get("knowledge_enabled", True)),
+            )
+            db.add(ai_config)
+
         await db.commit()
         await db.refresh(ai_config)
 
