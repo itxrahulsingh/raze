@@ -121,6 +121,8 @@ async def _ensure_chat_sdk_schema(db: AsyncSession) -> None:
             "ALTER TABLE chat_domains ADD COLUMN IF NOT EXISTS last_used TIMESTAMPTZ",
         ]
         try:
+            conn = await db.connection()
+            await conn.run_sync(ChatDomain.__table__.create, checkfirst=True)
             for stmt in statements:
                 await db.execute(text(stmt))
             await db.commit()
