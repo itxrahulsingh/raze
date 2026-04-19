@@ -451,13 +451,13 @@ async def pgvector_search_raw(
         f"""
         SELECT
             id::text,
-            1 - (embedding <=> :query_vec::vector) AS similarity,
+            1 - (embedding <=> :query_vec) AS similarity,
             content,
             source_id::text,
             chunk_index
         FROM {table_name}
         WHERE embedding IS NOT NULL {where_clause}
-        ORDER BY embedding <=> :query_vec::vector
+        ORDER BY embedding <=> :query_vec
         LIMIT :top_k
         """
     )

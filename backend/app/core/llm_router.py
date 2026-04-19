@@ -633,7 +633,7 @@ class LLMRouter:
             if adapter is None:
                 raise ValueError(f"Provider '{prov}' not available")
 
-            async def _call() -> AsyncGenerator[str, None]:
+            async def _call():
                 return adapter.generate(
                     messages=messages,
                     model=mdl,
@@ -652,11 +652,11 @@ class LLMRouter:
                 reraise=True,
             ):
                 with attempt:
-                    return await _call()
+                    async for chunk in await _call():
+                        yield chunk
 
         try:
-            gen = await _attempt(provider, model)
-            async for chunk in gen:
+            async for chunk in _attempt(provider, model):
                 yield chunk
         except Exception as primary_err:
             logger.warning(
@@ -672,8 +672,7 @@ class LLMRouter:
                     fallback_model=fallback_model,
                 )
                 try:
-                    gen = await _attempt(fallback_provider, fallback_model)
-                    async for chunk in gen:
+                    async for chunk in _attempt(fallback_provider, fallback_model):
                         yield chunk
                 except Exception as fallback_err:
                     logger.error(
@@ -693,9 +692,22 @@ class LLMRouter:
         model: str | None = None,
     ) -> list[float]:
         """
-        Generate a dense embedding vector using OpenAI's embedding API by default.
-        Falls back to a zero vector on error so downstream code can continue.
+        Generate dense embedding vector using Ollama when available, falls back to OpenAI.
         """
+        if settings.ollama_enabled:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        f"{settings.ollama_base_url}/api/embeddings",
+                        json={"model": "nomic-embed-text", "prompt": text},
+                        timeout=30.0
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    return data.get("embedding", [])
+            except Exception as exc:
+                logger.error("ollama_embedding_failed", error=str(exc))
+
         effective_model = model or settings.openai_embedding_model
         try:
             return await self._openai.generate_embedding(text, effective_model)

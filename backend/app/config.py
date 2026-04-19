@@ -113,11 +113,14 @@ class Settings(BaseSettings):
     ollama_enabled: bool = True
 
     # ── Qdrant ───────────────────────────────────────────────────────────────
-    qdrant_url: str = "http://localhost:6333"
+    qdrant_url: str = Field(
+        default="http://qdrant:6333",
+        description="Qdrant connection URL",
+    )
     qdrant_api_key: str | None = None
     qdrant_collection_knowledge: str = "raze_knowledge"
     qdrant_collection_memory: str = "raze_memory"
-    qdrant_vector_size: int = 3072
+    qdrant_vector_size: int = 768
 
     # ── Storage Backend ───────────────────────────────────────────────────────
     # "minio" stores files in MinIO/S3; "local" stores on the container filesystem.

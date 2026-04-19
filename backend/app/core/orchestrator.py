@@ -127,13 +127,15 @@ When executing tools, be clear about what you're doing and why."""
                 ai_config = result.scalar_one_or_none()
 
             if not ai_config:
-                # Fallback default config
+                # Fallback default config - prefer Ollama if enabled, else OpenAI
+                default_provider = "ollama" if self.settings.ollama_enabled else "openai"
+                default_model = self.settings.ollama_default_model if self.settings.ollama_enabled else "gpt-4o-mini"
                 ai_config = AIConfig(
                     id=str(uuid.uuid4()),
                     name="Default",
                     is_default=True,
-                    provider="openai",
-                    model_name="gpt-4-turbo-preview",
+                    provider=default_provider,
+                    model_name=default_model,
                     temperature=0.7,
                     max_tokens=2000,
                     system_prompt=self.default_system_prompt,

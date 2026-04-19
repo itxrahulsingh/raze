@@ -1430,7 +1430,8 @@ async def create_knowledge_from_conversation(
     content_lines.append(f"Messages: {len(messages)}\n\n")
 
     for msg in messages:
-        role = "User" if msg.role.value == "user" else "Assistant"
+        role_str = msg.role if isinstance(msg.role, str) else msg.role.value
+        role = "User" if role_str == "user" else "Assistant"
         content_lines.append(f"**{role}**: {msg.content}\n")
 
     full_content = "\n".join(content_lines)
