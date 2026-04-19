@@ -6,10 +6,11 @@ import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any, AsyncGenerator
+from urllib.parse import urlparse
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +45,29 @@ def _generate_api_key(length: int = 32) -> str:
 def _hash_api_key(api_key: str) -> str:
     """Hash an API key for storage."""
     return hashlib.sha256(api_key.encode()).hexdigest()
+
+
+def _is_origin_allowed(origin: str | None, domain: str) -> bool:
+    """Validate browser Origin against approved SDK domain."""
+    if not origin:
+        return False
+    try:
+        host = (urlparse(origin).hostname or "").lower()
+    except Exception:
+        return False
+    allowed = domain.lower()
+    return host == allowed or host.endswith(f".{allowed}")
+
+
+def _cors_headers(origin: str | None) -> dict[str, str]:
+    safe_origin = origin or "*"
+    return {
+        "Access-Control-Allow-Origin": safe_origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Headers": "Content-Type, X-API-Key, Authorization",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Vary": "Origin",
+    }
 
 
 @router.post("/domains")
@@ -275,6 +299,7 @@ async def chat_with_knowledge(
     request: Request,
     body: SDKChatRequest,
     x_api_key: str = Header(None),
+    origin: str | None = Header(default=None, alias="Origin"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Chat endpoint for SDK embedding (requires valid API key)."""
@@ -304,6 +329,11 @@ async def chat_with_knowledge(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Domain not approved for chat",
+        )
+    if origin and not _is_origin_allowed(origin, domain.domain):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin not allowed for this SDK domain",
         )
 
     # Update last used
@@ -360,7 +390,7 @@ async def chat_with_knowledge(
             session_id=session_id,
             user_id=None,
             ai_config_id=None,
-            use_knowledge=bool(body.knowledge_ids),
+            use_knowledge=True,
             use_memory=False,
             tools_enabled=True,
             allowed_tools=None,
@@ -377,17 +407,20 @@ async def chat_with_knowledge(
 
     latency_ms = int((time.monotonic() - start_ts) * 1000)
 
-    return {
-        "response": ai_content,
-        "domain": domain.domain,
-        "model_used": model_used,
-        "provider_used": provider_used,
-        "tokens_used": tokens_used,
-        "latency_ms": latency_ms,
-        "sources": [],
-        "timestamp": datetime.now(UTC).isoformat(),
-        "session_id": session_id,
-    }
+    return JSONResponse(
+        content={
+            "response": ai_content,
+            "domain": domain.domain,
+            "model_used": model_used,
+            "provider_used": provider_used,
+            "tokens_used": tokens_used,
+            "latency_ms": latency_ms,
+            "sources": [],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "session_id": session_id,
+        },
+        headers=_cors_headers(origin),
+    )
 
 
 def _sse_line(chunk: StreamChunk) -> str:
@@ -401,6 +434,7 @@ async def stream_chat_with_knowledge(
     background_tasks: BackgroundTasks,
     body: SDKChatRequest,
     x_api_key: str = Header(None),
+    origin: str | None = Header(default=None, alias="Origin"),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Streaming chat endpoint for SDK embedding (requires valid API key)."""
@@ -430,6 +464,11 @@ async def stream_chat_with_knowledge(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Domain not approved for chat",
+        )
+    if origin and not _is_origin_allowed(origin, domain.domain):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin not allowed for this SDK domain",
         )
 
     # Update last used
@@ -500,7 +539,7 @@ async def stream_chat_with_knowledge(
                 session_id=session_id,
                 user_id=None,
                 ai_config_id=None,
-                use_knowledge=bool(body.knowledge_ids),
+                use_knowledge=True,
                 use_memory=False,
                 tools_enabled=True,
                 allowed_tools=None,
@@ -553,13 +592,15 @@ async def stream_chat_with_knowledge(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
             "Connection": "keep-alive",
+            **_cors_headers(origin),
         },
     )
 
 
-@router.get("/chat-sdk/config")
+@router.get("/config")
 async def get_sdk_config(
     x_api_key: str = Header(None),
+    origin: str | None = Header(default=None, alias="Origin"),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Get SDK widget configuration (requires valid API key)."""
@@ -587,6 +628,11 @@ async def get_sdk_config(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Domain not approved",
         )
+    if origin and not _is_origin_allowed(origin, domain.domain):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin not allowed for this SDK domain",
+        )
 
     # Get default brand config from AppSettings
     settings_result = await db.execute(
@@ -594,29 +640,32 @@ async def get_sdk_config(
     )
     settings = settings_result.scalars().first()
 
-    return {
-        "bot_name": domain.bot_name or (settings.brand_name if settings else "Assistant"),
-        "welcome_message": domain.welcome_message or "How can I help you today?",
-        "widget_color": settings.primary_color if settings else "#007bff",
-        "show_knowledge_sources": True,
-        "domain": domain.domain,
-        "display_name": domain.display_name,
-    }
+    return JSONResponse(
+        content={
+            "bot_name": domain.bot_name or (settings.brand_name if settings else "Assistant"),
+            "welcome_message": domain.welcome_message or "How can I help you today?",
+            "widget_color": settings.primary_color if settings else "#007bff",
+            "show_knowledge_sources": True,
+            "domain": domain.domain,
+            "display_name": domain.display_name,
+        },
+        headers=_cors_headers(origin),
+    )
 
 
 @router.options("/chat")
-async def chat_preflight():
+async def chat_preflight(request: Request):
     """Preflight handler for /chat endpoint."""
-    return {}
+    return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
 
 
 @router.options("/chat/stream")
-async def chat_stream_preflight():
+async def chat_stream_preflight(request: Request):
     """Preflight handler for /chat/stream endpoint."""
-    return {}
+    return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))
 
 
-@router.options("/chat-sdk/config")
-async def config_preflight():
+@router.options("/config")
+async def config_preflight(request: Request):
     """Preflight handler for /config endpoint."""
-    return {}
+    return Response(status_code=204, headers=_cors_headers(request.headers.get("origin")))

@@ -24,7 +24,8 @@
 
   const CONFIG = window.RAZE_CONFIG || {};
   const API_KEY = CONFIG.apiKey;
-  const API_URL = CONFIG.apiUrl || 'http://localhost:8000';
+  const RAW_API_URL = CONFIG.apiUrl || 'http://localhost:8000';
+  const API_URL = RAW_API_URL.replace(/\/api\/v1\/?$/, '').replace(/\/$/, '');
   const POSITION = CONFIG.position || 'bottom-right';
 
   if (!API_KEY) {

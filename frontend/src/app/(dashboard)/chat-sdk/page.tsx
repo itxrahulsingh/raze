@@ -255,7 +255,7 @@ export default function ChatSDKPage() {
     return `<script>
   window.RAZE_CONFIG = {
     apiKey: '${keyValue}',
-    apiUrl: '${baseUrl}/api/v1',
+    apiUrl: '${baseUrl}',
     position: 'bottom-right',
     theme: '#0F766E',
     domain: '${domain.domain}'
