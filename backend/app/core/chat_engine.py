@@ -220,14 +220,31 @@ class ChatEngine:
         start_ts = time.monotonic()
 
         ai_config = await self._load_ai_config(ai_config_id)
-        system_prompt, knowledge_chunks, memory_items = await self._build_context(
-            message=message,
-            session_id=session_id,
-            user_id=str(user_id) if user_id else None,
-            ai_config=ai_config,
-            use_knowledge=use_knowledge,
-            use_memory=use_memory,
-        )
+
+        # Build context with timeout (max 3 seconds) to avoid blocking LLM generation
+        try:
+            system_prompt, knowledge_chunks, memory_items = await asyncio.wait_for(
+                self._build_context(
+                    message=message,
+                    session_id=session_id,
+                    user_id=str(user_id) if user_id else None,
+                    ai_config=ai_config,
+                    use_knowledge=use_knowledge,
+                    use_memory=use_memory,
+                ),
+                timeout=3.0
+            )
+        except asyncio.TimeoutError:
+            logger.warning("chat.context_build_timeout", message_preview=message[:50])
+            # Proceed with minimal context
+            base_prompt = (
+                ai_config.system_prompt
+                if ai_config and ai_config.system_prompt
+                else _DEFAULT_SYSTEM_PROMPT
+            )
+            system_prompt = base_prompt
+            knowledge_chunks = []
+            memory_items = []
 
         messages = self._build_messages(
             system_prompt=system_prompt,

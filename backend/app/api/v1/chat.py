@@ -485,41 +485,32 @@ async def stream_message(
         latency_ms = int((time.monotonic() - start_ts) * 1000)
         full_content = "".join(collected_text)
 
-        # Persist AI message in background
-        async def _persist_async() -> None:
-            from app.database import AsyncSessionLocal
-            async with AsyncSessionLocal() as session:
-                try:
-                    ai_msg = Message(
-                        id=msg_id,
-                        conversation_id=conv_id,
-                        role=MessageRole.assistant.value,
-                        content=full_content,
-                        tokens_used=tokens_used,
-                        prompt_tokens=prompt_tokens,
-                        completion_tokens=completion_tokens,
-                        model_used=model_used,
-                        provider_used=provider_used,
-                        latency_ms=latency_ms,
-                        cost_usd=cost_usd,
-                    )
-                    session.add(ai_msg)
+        # Persist AI message immediately (before streaming ends)
+        try:
+            ai_msg = Message(
+                id=msg_id,
+                conversation_id=conv_id,
+                role=MessageRole.assistant.value,
+                content=full_content,
+                tokens_used=tokens_used,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                model_used=model_used,
+                provider_used=provider_used,
+                latency_ms=latency_ms,
+                cost_usd=cost_usd,
+            )
+            db.add(ai_msg)
 
-                    # Update conversation stats
-                    result = await session.execute(select(Conversation).where(Conversation.id == conv_id))
-                    conv_obj = result.scalars().first()
-                    if conv_obj:
-                        conv_obj.message_count = (conv_obj.message_count or 0) + 2
-                        conv_obj.total_tokens = (conv_obj.total_tokens or 0) + tokens_used
-                        conv_obj.total_cost_usd = (conv_obj.total_cost_usd or 0.0) + cost_usd
+            # Update conversation stats synchronously
+            conv.message_count = (conv.message_count or 0) + 2
+            conv.total_tokens = (conv.total_tokens or 0) + tokens_used
+            conv.total_cost_usd = (conv.total_cost_usd or 0.0) + cost_usd
 
-                    await session.commit()
-                    logger.info("chat.stream_message_persisted", conversation_id=conv_id, tokens=tokens_used)
-                except Exception as exc:
-                    logger.error("chat.stream_persist_error", error=str(exc))
-
-        # Add the async task to background_tasks
-        background_tasks.add_task(_persist_async)
+            await db.commit()
+            logger.info("chat.stream_message_persisted", conversation_id=conv_id, tokens=tokens_used)
+        except Exception as exc:
+            logger.error("chat.stream_persist_error", error=str(exc))
 
         yield _sse_line(
             StreamChunk(

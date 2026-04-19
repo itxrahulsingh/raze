@@ -563,9 +563,10 @@ async def create_knowledge_source(
     await db.commit()
     await db.refresh(source)
 
-    # Always process ingestion in the background so chunking/indexing is ready.
-    # Usage is still gated by source status/flags during retrieval.
-    background_tasks.add_task(_trigger_processing, source.id)
+    # Start processing immediately (don't wait for completion)
+    # This ensures chunks are available quickly for approved sources
+    import asyncio
+    asyncio.create_task(_trigger_processing(source.id))
 
     logger.info(
         "knowledge.source_created",
