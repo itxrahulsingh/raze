@@ -682,9 +682,9 @@ async def get_sdk_config(
 
     return JSONResponse(
         content={
-            "bot_name": domain.bot_name or (app_settings.brand_name if app_settings else "Assistant"),
+            "bot_name": domain.bot_name or (getattr(app_settings, "brand_name", None) or "Assistant"),
             "welcome_message": domain.welcome_message or "How can I help you today?",
-            "widget_color": app_settings.primary_color if app_settings else "#007bff",
+            "widget_color": (getattr(app_settings, "primary_color", None) or "#007bff"),
             "show_knowledge_sources": True,
             "domain": domain.domain,
             "display_name": domain.display_name,
