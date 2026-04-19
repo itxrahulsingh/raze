@@ -18,6 +18,7 @@ import asyncio
 import json
 import time
 import uuid
+import re
 from typing import Any, AsyncGenerator
 
 import httpx
@@ -34,6 +35,7 @@ from app.core.tool_engine import ToolEngine
 from app.core.vector_search import VectorSearchEngine
 from app.database import get_redis
 from app.models.ai_config import AIConfig
+from app.models.settings import AppSettings
 
 settings = get_settings()
 logger = structlog.get_logger(__name__)
@@ -89,6 +91,29 @@ class ChatEngine:
         Process a message non-streaming. Returns a full result dict.
         """
         start_ts = time.monotonic()
+        industry_policy = await self._get_industry_policy()
+        blocked_text = self._industry_block_response(message, industry_policy)
+        if blocked_text:
+            latency_ms = int((time.monotonic() - start_ts) * 1000)
+            prompt_tokens = 32
+            completion_tokens = max(8, len(blocked_text.split()))
+            tokens_used = prompt_tokens + completion_tokens
+            await self._memory.add_to_context(session_id, "user", message)
+            await self._memory.add_to_context(session_id, "assistant", blocked_text)
+            return {
+                "content": blocked_text,
+                "model_used": "policy_guard",
+                "provider_used": "system",
+                "tokens_used": tokens_used,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": 0.0,
+                "knowledge_chunks_used": 0,
+                "memory_items_used": 0,
+                "tool_calls": None,
+                "tool_results": None,
+                "latency_ms": latency_ms,
+            }
 
         ai_config = await self._load_ai_config(ai_config_id)
         system_prompt, knowledge_chunks, memory_items = await self._build_context(
@@ -221,6 +246,28 @@ class ChatEngine:
           {"type": "meta", "tokens_used": N, "cost_usd": F, "model_used": "...", ...}
         """
         start_ts = time.monotonic()
+        industry_policy = await self._get_industry_policy()
+        blocked_text = self._industry_block_response(message, industry_policy)
+        if blocked_text:
+            for token in self._tokenize_for_stream(blocked_text):
+                yield {"type": "text", "content": token}
+            await self._memory.add_to_context(session_id, "user", message)
+            await self._memory.add_to_context(session_id, "assistant", blocked_text)
+            prompt_tokens = 32
+            completion_tokens = max(8, len(blocked_text.split()))
+            yield {
+                "type": "meta",
+                "tokens_used": prompt_tokens + completion_tokens,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "cost_usd": 0.0,
+                "model_used": "policy_guard",
+                "provider_used": "system",
+                "knowledge_chunks_used": 0,
+                "memory_items_used": 0,
+                "latency_ms": int((time.monotonic() - start_ts) * 1000),
+            }
+            return
 
         ai_config = await self._load_ai_config(ai_config_id)
 
@@ -522,7 +569,7 @@ class ChatEngine:
                 "provider": decision.provider,
                 "model": decision.model,
                 "temperature": float(ai_config.temperature or 0.7),
-                "max_tokens": int(ai_config.max_tokens or 4096),
+                "max_tokens": int(ai_config.max_tokens or 1200),
                 "top_p": float(ai_config.top_p or 1.0),
                 "fallback_provider": decision.fallback_provider,
                 "fallback_model": decision.fallback_model,
@@ -539,11 +586,82 @@ class ChatEngine:
             "provider": decision.provider,
             "model": decision.model,
             "temperature": 0.7,
-            "max_tokens": 4096,
+            "max_tokens": 900,
             "top_p": 1.0,
             "fallback_provider": decision.fallback_provider,
             "fallback_model": decision.fallback_model,
         }
+
+    async def _get_industry_policy(self) -> dict[str, Any]:
+        """Load industry policy from settings; defaults to unrestricted."""
+        try:
+            result = await self._db.execute(
+                select(AppSettings).where(AppSettings.id == "singleton")
+            )
+            row = result.scalars().first()
+            if not row:
+                return {"enabled": False}
+            topics_raw = row.industry_topics
+            topics: list[str] = []
+            if isinstance(topics_raw, str) and topics_raw.strip():
+                try:
+                    parsed = json.loads(topics_raw)
+                    if isinstance(parsed, list):
+                        topics = [str(t).strip().lower() for t in parsed if str(t).strip()]
+                except Exception:
+                    topics = [t.strip().lower() for t in topics_raw.split(",") if t.strip()]
+            elif isinstance(topics_raw, list):
+                topics = [str(t).strip().lower() for t in topics_raw if str(t).strip()]
+            return {
+                "enabled": bool(row.industry_name),
+                "industry_name": (row.industry_name or "").strip(),
+                "topics": topics,
+                "restriction_mode": (row.industry_restriction_mode or "strict").strip().lower(),
+            }
+        except Exception as exc:
+            logger.warning("chat_engine.industry_policy_load_failed", error=str(exc))
+            return {"enabled": False}
+
+    def _industry_block_response(self, message: str, policy: dict[str, Any]) -> str | None:
+        """Return refusal text when strict industry policy blocks the query."""
+        if not policy.get("enabled"):
+            return None
+        if policy.get("restriction_mode") != "strict":
+            return None
+        lowered = (message or "").strip().lower()
+        if not lowered:
+            return None
+
+        tokens = set(re.findall(r"[a-z0-9]+", lowered))
+        topics = {t for t in policy.get("topics", []) if t}
+        industry = str(policy.get("industry_name", "")).lower()
+
+        industry_words = {w for w in re.findall(r"[a-z0-9]+", industry) if len(w) > 2}
+        travel_core: set[str] = set()
+        if {"travel", "tourism"} & industry_words:
+            travel_core = {
+                "travel", "tourism", "trip", "trips", "itinerary", "flight", "flights",
+                "hotel", "hotels", "destination", "destinations", "visa", "airport",
+                "booking", "bookings", "package", "packages", "vacation", "holiday",
+                "resort", "cruise", "train", "bus", "sightseeing"
+            }
+        allowed = travel_core | topics | industry_words
+
+        if tokens & allowed:
+            return None
+
+        topic_hint = ", ".join(sorted(list(topics))[:4]) if topics else "flights, hotels, destinations, trips"
+        industry_name = policy.get("industry_name") or "this industry"
+        return (
+            f"I can only assist with {industry_name} questions. "
+            f"Please ask about {topic_hint}."
+        )
+
+    @staticmethod
+    def _tokenize_for_stream(text: str) -> list[str]:
+        """Emit text in token-like chunks for smoother incremental rendering."""
+        parts = re.findall(r"\S+\s*|\n", text)
+        return parts if parts else [text]
 
     @staticmethod
     def _format_tools(tools: list[Any]) -> list[dict]:
