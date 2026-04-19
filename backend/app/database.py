@@ -229,12 +229,12 @@ async def connect_db() -> None:
 
         # Create all tables if they don't exist
         from app.models import (  # noqa: F401
-            ai_config, analytics, conversation, knowledge, memory, tool, user
+            ai_config, analytics, conversation, knowledge, memory, settings as settings_model, tool, user
         )
 
         # Create tables using raw SQL with IF NOT EXISTS for idempotency
         from app.models import (  # noqa: F401
-            ai_config, analytics, conversation, knowledge, memory, tool, user
+            ai_config, analytics, conversation, knowledge, memory, settings as settings_model, tool, user
         )
         async with engine.connect() as conn:
             # Get DDL statements from metadata

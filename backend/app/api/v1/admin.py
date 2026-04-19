@@ -17,7 +17,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -400,6 +400,162 @@ async def list_users(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.post("/users", status_code=status.HTTP_201_CREATED)
+async def create_user(
+    request: Request,
+    data: dict = Body(...),
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Create a new user (admin only)."""
+    await deps.apply_rate_limit(request, "admin_users_create", 30, 60, current_user)
+
+    from app.core.security import get_password_hash
+
+    email = str(data.get("email", "")).strip().lower()
+    username = str(data.get("username", "")).strip().lower()
+    password_raw = data.get("password", "")
+    # Ensure password is a string and not longer than 72 bytes (bcrypt limit)
+    if isinstance(password_raw, (list, dict)):
+        password_raw = str(password_raw)
+    password = str(password_raw)[:72] if password_raw else ""
+    full_name = str(data.get("full_name", "")).strip() or None
+    role = str(data.get("role", "viewer")).strip().lower()
+
+    existing_email = await db.execute(select(User).where(User.email == email))
+    if existing_email.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Email already exists")
+
+    existing_username = await db.execute(select(User).where(User.username == username))
+    if existing_username.scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Username already exists")
+
+    # Hash password using bcrypt directly
+    try:
+        import bcrypt
+        salt = bcrypt.gensalt(rounds=12)
+        hashed_pwd = bcrypt.hashpw(password[:72].encode('utf-8'), salt).decode('utf-8')
+    except Exception as e:
+        # Fallback to passlib
+        try:
+            hashed_pwd = get_password_hash(password[:72])
+        except Exception:
+            raise HTTPException(status_code=500, detail="Password hashing failed")
+
+    user = User(
+        email=email,
+        username=username,
+        hashed_password=hashed_pwd,
+        full_name=full_name,
+        role=role,
+        is_active=True,
+        is_verified=False,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    await log_audit(db, current_user.id, "create", "user", str(user.id))
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "username": user.username,
+        "full_name": user.full_name,
+        "role": user.role,
+        "is_active": user.is_active,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
+@router.put("/users/{user_id}")
+async def update_user(
+    user_id: str,
+    request: Request,
+    data: dict = Body(...),
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Update user (admin only)."""
+    await deps.apply_rate_limit(request, "admin_users_update", 30, 60, current_user)
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    changes = {}
+    if "full_name" in data:
+        new_name = data["full_name"]
+        if new_name != user.full_name:
+            changes["full_name"] = (user.full_name, new_name)
+            user.full_name = new_name
+
+    if "role" in data:
+        new_role = str(data["role"]).strip().lower() if data["role"] else user.role
+        if new_role not in ["viewer", "admin", "superadmin"]:
+            raise HTTPException(status_code=400, detail="Invalid role")
+        if new_role != user.role:
+            changes["role"] = (user.role, new_role)
+            user.role = new_role
+
+    if "is_active" in data:
+        new_active = bool(data["is_active"])
+        if new_active != user.is_active:
+            changes["is_active"] = (user.is_active, new_active)
+            user.is_active = new_active
+
+    if changes:
+        await db.commit()
+        await log_audit(db, current_user.id, "update", "user", str(user.id), changes)
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "username": user.username,
+        "full_name": user.full_name,
+        "role": user.role,
+        "is_active": user.is_active,
+        "is_verified": user.is_verified,
+        "updated_at": user.updated_at.isoformat(),
+    }
+
+
+@router.delete(
+    "/users/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+    response_class=Response,
+)
+async def delete_user(
+    user_id: str,
+    request: Request,
+    current_user: User = Depends(deps.get_current_admin),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Soft-delete user (admin only)."""
+    await deps.apply_rate_limit(request, "admin_users_delete", 30, 60, current_user)
+
+    try:
+        user_uuid = uuid.UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid user ID")
+
+    result = await db.execute(select(User).where(User.id == user_uuid))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.is_active = False
+    await db.commit()
+    await log_audit(db, current_user.id, "delete", "user", str(user.id))
 
 
 @router.get("/memories")

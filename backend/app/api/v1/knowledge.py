@@ -40,7 +40,8 @@ from fastapi import (
     UploadFile,
     status,
 )
-from sqlalchemy import func, select, update
+from fastapi.responses import FileResponse
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -1272,12 +1273,16 @@ async def rollback_chunk_version(
     summary="Create an article",
 )
 async def create_article(
-    body: dict,
-    background_tasks: BackgroundTasks,
+    body: dict = Body(...),
+    background_tasks: BackgroundTasks = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> KnowledgeSourceResponse:
     """Create a knowledge article (text-based)."""
+    if background_tasks is None:
+        from fastapi import BackgroundTasks as BT
+        background_tasks = BT()
+
     name = (body.get("name") or "").strip()
     content = (body.get("content") or "").strip()
     description = body.get("description")
@@ -1335,7 +1340,10 @@ async def create_article(
     await db.commit()
     await db.refresh(source)
 
-    background_tasks.add_task(_ingest_raw_text_bg, source.id, content, source.status)
+    # Start ingestion immediately (reliable)
+    import asyncio
+    asyncio.create_task(_ingest_raw_text_bg(source.id, content, source.status))
+
     return KnowledgeSourceResponse.model_validate(source)
 
 
@@ -1393,6 +1401,62 @@ async def update_source(
 
     await db.refresh(source)
     return KnowledgeSourceResponse.model_validate(source)
+
+
+# ─── GET /knowledge/sources/{id}/download ────────────────────────────────────
+
+@router.get(
+    "/sources/{source_id}/download",
+    summary="Download knowledge source",
+)
+async def download_source(
+    source_id: uuid.UUID,
+    current_user: User = Depends(deps.get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download the original source file or content."""
+    result = await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == source_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Source not found")
+
+    # If it's a file, download from storage
+    if source.file_path:
+        try:
+            file_bytes = await _read_stored_file(source.file_path)
+            filename = source.name.replace(" ", "_") + ".pdf"
+            return FileResponse(
+                content=file_bytes,
+                media_type=source.mime_type or "application/octet-stream",
+                filename=filename,
+                headers={"Content-Disposition": f"attachment; filename={filename}"}
+            )
+        except Exception as e:
+            logger.error("knowledge.download_error", source_id=str(source_id), error=str(e))
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Download failed")
+
+    # If it's raw text (article/chat), return as text file
+    if source.type in [KnowledgeSourceType.manual.value, KnowledgeSourceType.txt.value]:
+        content = source.src_metadata.get("raw_text", "") if source.src_metadata else ""
+        if not content:
+            # Reconstruct from chunks
+            chunk_result = await db.execute(
+                select(KnowledgeChunk).where(KnowledgeChunk.source_id == source_id).order_by(KnowledgeChunk.chunk_index)
+            )
+            chunks = chunk_result.scalars().all()
+            content = "\n\n".join([c.content for c in chunks])
+
+        from io import BytesIO
+        file_bytes = content.encode("utf-8")
+        filename = source.name.replace(" ", "_") + ".txt"
+        return FileResponse(
+            content=file_bytes,
+            media_type="text/plain",
+            filename=filename,
+            headers={"Content-Disposition": f"attachment; filename={filename}"}
+        )
+
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot download this source type")
 
 
 @router.post(

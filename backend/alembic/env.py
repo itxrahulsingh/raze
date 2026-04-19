@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app.config import get_settings
 from app.database import Base
 from app.models import (
-    user, conversation, knowledge, memory, tool, ai_config, analytics
+    user, conversation, knowledge, memory, tool, ai_config, analytics, settings
 )
 
 config = context.config

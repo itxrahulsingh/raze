@@ -11,6 +11,7 @@ import structlog
 from app.config import get_settings
 from app.database import connect_db, disconnect_db, connect_redis, disconnect_redis
 from app.api.v1 import auth, chat, chat_sdk, knowledge, knowledge_settings, memory, tools, admin, admin_settings, analytics, sdk
+from app.api.v1 import settings as settings_router
 
 settings = get_settings()
 
@@ -54,6 +55,28 @@ async def lifespan(app: FastAPI):
         logger.info("Qdrant collections initialized")
     except Exception as e:
         logger.warning("Qdrant initialization warning - will retry on first request", error=str(e)[:100], qdrant_url=settings.qdrant_url)
+
+    # Initialize default AppSettings if not exists
+    try:
+        from sqlalchemy import select
+        from app.models.settings import AppSettings
+        from app.services.settings_service import SettingsService
+        from app.database import AsyncSessionLocal, get_redis
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(select(AppSettings).where(AppSettings.id == "singleton"))
+            existing = result.scalars().first()
+            if not existing:
+                redis = None
+                try:
+                    redis = get_redis()
+                except Exception:
+                    pass
+                service = SettingsService(db, redis)
+                await service.reset_to_defaults()
+                logger.info("AppSettings initialized with defaults")
+    except Exception as e:
+        logger.warning("AppSettings initialization warning", error=str(e)[:100])
 
     # Soft-validate Ollama if enabled (retry on first request if unavailable)
     if settings.ollama_enabled:
@@ -140,6 +163,7 @@ app.include_router(chat.router, prefix="/api/v1", tags=["chat"])
 app.include_router(chat_sdk.router, prefix="/api/v1", tags=["chat"])
 app.include_router(knowledge.router, prefix="/api/v1", tags=["knowledge"])
 app.include_router(knowledge_settings.router, prefix="/api/v1", tags=["knowledge"])
+app.include_router(settings_router.router, prefix="/api/v1", tags=["settings"])
 app.include_router(memory.router, prefix="/api/v1/memory", tags=["memory"])
 app.include_router(tools.router, prefix="/api/v1/tools", tags=["tools"])
 app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])

@@ -23,6 +23,7 @@ from app.models.knowledge import (
 )
 from app.models.knowledge_version import KnowledgeChunkVersion
 from app.models.memory import Memory, MemoryRetentionPolicy, MemoryType
+from app.models.settings import AppSettings, AppConfig
 from app.models.system import AuditLog, SystemConfig
 from app.models.tool import Tool, ToolExecution, ToolExecutionStatus, ToolType
 from app.models.user import APIKey, User, UserRole
@@ -48,6 +49,9 @@ __all__ = [
     "Memory",
     "MemoryType",
     "MemoryRetentionPolicy",
+    # Settings
+    "AppSettings",
+    "AppConfig",
     # Tool
     "Tool",
     "ToolType",

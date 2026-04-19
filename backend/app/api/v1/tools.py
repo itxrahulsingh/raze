@@ -1,7 +1,8 @@
 """Tool management API routes."""
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import uuid
 
 from app.api.v1 import deps
 from app.database import get_db
@@ -19,22 +20,28 @@ async def create_tool(
 ):
     """Create tool."""
     await deps.apply_rate_limit(request, "tools_create", 30, 60, current_user)
-    import uuid
     tool = Tool(
-        id=str(uuid.uuid4()),
+        id=uuid.uuid4(),
         name=data.name,
+        display_name=data.display_name,
         description=data.description,
         type=data.type,
         schema=data.tool_schema,
         endpoint_url=data.endpoint_url,
         method=data.method,
+        timeout_seconds=data.timeout_seconds,
+        max_retries=data.max_retries,
         auth_type=data.auth_type,
         auth_config=data.auth_config or {},
+        default_headers=data.default_headers,
         is_active=True,
-        tags=data.tags or []
+        requires_approval=data.requires_approval,
+        tags=data.tags or [],
+        tool_metadata=data.tool_metadata or {}
     )
     db.add(tool)
     await db.commit()
+    await db.refresh(tool)
     return tool
 
 @router.get("/", response_model=list[ToolResponse])
@@ -55,12 +62,10 @@ async def list_tools(
 @router.get("/{tool_id}", response_model=ToolResponse)
 async def get_tool(
     tool_id: str,
-    request: Request,
     current_user = Depends(deps.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get tool detail - authenticated users only."""
-    await deps.apply_rate_limit(request, "tools_get", 30, 60, current_user)
     result = await db.execute(
         select(Tool).where((Tool.id == tool_id) & (Tool.is_active == True))
     )
@@ -82,12 +87,16 @@ async def update_tool(
     result = await db.execute(select(Tool).where(Tool.id == tool_id))
     tool = result.scalar_one_or_none()
     if not tool:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Tool not found")
 
     for field, value in data.model_dump(exclude_unset=True, by_alias=True).items():
-        setattr(tool, field, value)
+        if field == "schema":
+            setattr(tool, "schema", value)
+        else:
+            setattr(tool, field, value)
 
     await db.commit()
+    await db.refresh(tool)
     return tool
 
 @router.delete("/{tool_id}")
@@ -102,7 +111,7 @@ async def delete_tool(
     result = await db.execute(select(Tool).where(Tool.id == tool_id))
     tool = result.scalar_one_or_none()
     if not tool:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Tool not found")
 
     tool.is_active = False
     await db.commit()
@@ -111,8 +120,8 @@ async def delete_tool(
 @router.post("/{tool_id}/test")
 async def test_tool(
     tool_id: str,
-    input_data: dict,
     request: Request,
+    input_data: dict = Body(...),
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
@@ -121,13 +130,28 @@ async def test_tool(
     result = await db.execute(select(Tool).where(Tool.id == tool_id))
     tool = result.scalar_one_or_none()
     if not tool:
-        raise HTTPException(status_code=404)
+        raise HTTPException(status_code=404, detail="Tool not found")
 
-    return {"test_result": "success", "tool_used": tool.name}
+    try:
+        from app.core.tool_engine import ToolEngine
+        engine = ToolEngine(db)
+        exec_result = await engine.execute_tool(
+            tool_id=tool_id,
+            input_data=input_data,
+            conversation_id=None,
+            user_id=current_user.id
+        )
+        return exec_result
+    except Exception as e:
+        return {
+            "error": str(e),
+            "tool_id": tool_id,
+            "tool_name": tool.name,
+            "success": False
+        }
 
 @router.get("/{tool_id}/executions")
 async def get_tool_executions(
-    request: Request,
     tool_id: str,
     skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=100),
@@ -135,7 +159,6 @@ async def get_tool_executions(
     db: AsyncSession = Depends(get_db)
 ):
     """Get tool execution history - admin only."""
-    await deps.apply_rate_limit(request, "tools_executions_get", 30, 60, current_user)
     result = await db.execute(
         select(ToolExecution)
         .where(ToolExecution.tool_id == tool_id)
@@ -146,14 +169,12 @@ async def get_tool_executions(
 
 @router.get("/executions")
 async def get_all_executions(
-    request: Request,
     skip: int = Query(0, ge=0, le=10000),
     limit: int = Query(50, ge=1, le=100),
     current_user = Depends(deps.get_current_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """Get all recent tool executions - admin only."""
-    await deps.apply_rate_limit(request, "tools_executions_all", 30, 60, current_user)
     result = await db.execute(
         select(ToolExecution)
         .order_by(ToolExecution.executed_at.desc())

@@ -80,6 +80,8 @@ export default function SettingsPage() {
   const [loadingOllamaModels, setLoadingOllamaModels] = useState(false)
   const [savedConfigs, setSavedConfigs] = useState<AiConfigSummary[]>([])
   const [ollamaModels, setOllamaModels] = useState<string[]>([])
+  const [appSettings, setAppSettings] = useState<Record<string, any>>({})
+  const [loadingAppSettings, setLoadingAppSettings] = useState(false)
 
   const availableModels = useMemo(
     () => (provider === 'ollama' ? ollamaModels : PROVIDER_MODELS[provider]),
@@ -90,6 +92,7 @@ export default function SettingsPage() {
     fetchAiConfigs()
     fetchProviderConfigs()
     fetchWhiteLabelSettings()
+    fetchAppSettings()
     fetchOllamaModels()
   }, [])
 
@@ -160,6 +163,62 @@ export default function SettingsPage() {
       setLogoUrl(data.logo_url || '')
     } catch {
       // keep UI stable with defaults
+    }
+  }
+
+  const fetchAppSettings = async () => {
+    try {
+      setLoadingAppSettings(true)
+      const res = await fetch('/api/v1/settings', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+      })
+      if (!res.ok) return
+      const data = await res.json()
+      setAppSettings(data)
+    } catch {
+      // keep defaults
+    } finally {
+      setLoadingAppSettings(false)
+    }
+  }
+
+  const handleSaveAppSettings = async () => {
+    try {
+      setLoading(true)
+      const res = await fetch('/api/v1/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+        body: JSON.stringify(appSettings),
+      })
+      if (!res.ok) throw new Error('Failed to save settings')
+      const data = await res.json()
+      setAppSettings(data)
+      toast.success('App settings saved!')
+      markSaved()
+    } catch (err) {
+      toast.error(`Failed to save: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleResetAppSettings = async () => {
+    if (!window.confirm('Reset all app settings to defaults?')) return
+    try {
+      setLoading(true)
+      const res = await fetch('/api/v1/settings/reset', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+      })
+      if (!res.ok) throw new Error('Failed to reset settings')
+      const data = await res.json()
+      setAppSettings(data)
+      toast.success('App settings reset to defaults!')
+      markSaved()
+    } catch (err) {
+      toast.error(`Failed to reset: ${err instanceof Error ? err.message : 'Unknown error'}`)
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -285,6 +344,7 @@ export default function SettingsPage() {
           <TabsTrigger value="ai-config">AI Configuration</TabsTrigger>
           <TabsTrigger value="providers">Provider Setup</TabsTrigger>
           <TabsTrigger value="white-label">White Label</TabsTrigger>
+          <TabsTrigger value="app-settings">App Settings</TabsTrigger>
         </TabsList>
 
         <TabsContent value="ai-config">
@@ -566,6 +626,185 @@ export default function SettingsPage() {
               <Button onClick={handleSaveWhiteLabel} disabled={loading} className="w-full">
                 {loading ? 'Saving...' : 'Save White Label Settings'}
               </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
+        <TabsContent value="app-settings">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Palette className="h-5 w-5 text-primary" />
+                Application Settings
+              </CardTitle>
+              <CardDescription>
+                Manage branding, theme, chat configuration, and feature flags
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm font-medium">Brand Name</label>
+                  <Input
+                    placeholder="Application name"
+                    value={appSettings.brand_name || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, brand_name: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Brand Color</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      value={appSettings.brand_color || '#3B82F6'}
+                      onChange={(e) => setAppSettings((prev) => ({ ...prev, brand_color: e.target.value }))}
+                      className="h-10 w-10 rounded border border-input"
+                    />
+                    <Input
+                      placeholder="#3B82F6"
+                      value={appSettings.brand_color || ''}
+                      onChange={(e) => setAppSettings((prev) => ({ ...prev, brand_color: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Logo URL</label>
+                  <Input
+                    placeholder="https://..."
+                    value={appSettings.logo_url || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, logo_url: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Favicon URL</label>
+                  <Input
+                    placeholder="https://..."
+                    value={appSettings.favicon_url || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, favicon_url: e.target.value }))}
+                  />
+                </div>
+
+                <hr className="my-4" />
+
+                <div>
+                  <label className="text-sm font-medium">Page Title</label>
+                  <Input
+                    placeholder="Browser page title"
+                    value={appSettings.page_title || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, page_title: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Page Description</label>
+                  <Input
+                    placeholder="Meta description"
+                    value={appSettings.page_description || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, page_description: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Copyright Text</label>
+                  <Input
+                    placeholder="© 2026 Your Company"
+                    value={appSettings.copyright_text || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, copyright_text: e.target.value }))}
+                  />
+                </div>
+
+                <hr className="my-4" />
+
+                <div>
+                  <label className="text-sm font-medium">Chat Welcome Message</label>
+                  <Textarea
+                    placeholder="Initial greeting message"
+                    value={appSettings.chat_welcome_message || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, chat_welcome_message: e.target.value }))}
+                    rows={3}
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Chat Input Placeholder</label>
+                  <Input
+                    placeholder="Input placeholder text"
+                    value={appSettings.chat_placeholder || ''}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, chat_placeholder: e.target.value }))}
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Switch
+                    checked={appSettings.enable_suggestions}
+                    onCheckedChange={(checked) => setAppSettings((prev) => ({ ...prev, enable_suggestions: checked }))}
+                  />
+                  <label className="text-sm font-medium">Enable Chat Suggestions</label>
+                </div>
+
+                <hr className="my-4" />
+
+                <div>
+                  <label className="text-sm font-medium">Theme Mode</label>
+                  <select
+                    value={appSettings.theme_mode || 'dark'}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, theme_mode: e.target.value }))}
+                    className="w-full rounded border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                    <option value="auto">Auto</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium">Accent Color</label>
+                  <div className="flex gap-2">
+                    <input
+                      type="color"
+                      value={appSettings.accent_color || '#3B82F6'}
+                      onChange={(e) => setAppSettings((prev) => ({ ...prev, accent_color: e.target.value }))}
+                      className="h-10 w-10 rounded border border-input"
+                    />
+                    <Input
+                      placeholder="#3B82F6"
+                      value={appSettings.accent_color || ''}
+                      onChange={(e) => setAppSettings((prev) => ({ ...prev, accent_color: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <hr className="my-4" />
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Feature Flags</label>
+                  {['enable_knowledge_base', 'enable_web_search', 'enable_memory', 'enable_voice'].map((flag) => (
+                    <div key={flag} className="flex items-center gap-2">
+                      <Switch
+                        checked={appSettings[flag]}
+                        onCheckedChange={(checked) => setAppSettings((prev) => ({ ...prev, [flag]: checked }))}
+                      />
+                      <label className="text-sm">{flag.replace('enable_', '').replace(/_/g, ' ').toUpperCase()}</label>
+                    </div>
+                  ))}
+                </div>
+
+                <div>
+                  <label className="text-sm font-medium">Max File Size (MB)</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    max="500"
+                    value={appSettings.max_file_size_mb || 100}
+                    onChange={(e) => setAppSettings((prev) => ({ ...prev, max_file_size_mb: parseInt(e.target.value) }))}
+                  />
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <Button onClick={handleSaveAppSettings} disabled={loading}>
+                  {loading ? 'Saving...' : 'Save Settings'}
+                </Button>
+                <Button variant="outline" onClick={handleResetAppSettings} disabled={loading}>
+                  Reset to Defaults
+                </Button>
+              </div>
+              {saved && <p className="text-xs text-green-600">✓ Settings saved successfully</p>}
             </CardContent>
           </Card>
         </TabsContent>
