@@ -268,6 +268,34 @@ export default function AdminChatPage() {
     [getToken]
   )
 
+  const fetchConversationById = useCallback(
+    async (conversationId: string) => {
+      const authToken = getToken()
+      if (!authToken) return null
+      try {
+        const res = await fetch(`/api/v1/chat/conversations/${conversationId}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+        if (!res.ok) return null
+        const conversation = (await res.json()) as Conversation
+        setConversations((prev) => {
+          const existingIndex = prev.findIndex((item) => item.id === conversation.id)
+          if (existingIndex === 0) return prev
+          if (existingIndex > 0) {
+            const cloned = [...prev]
+            cloned.splice(existingIndex, 1)
+            return [conversation, ...cloned]
+          }
+          return [conversation, ...prev]
+        })
+        return conversation
+      } catch {
+        return null
+      }
+    },
+    [getToken]
+  )
+
   const loadLatestMessages = useCallback(
     async (conversationId: string) => {
       const authToken = getToken()
@@ -518,6 +546,13 @@ export default function AdminChatPage() {
         syncConversationInUrl(finalConversationId)
       }
 
+      if (finalConversationId) {
+        const resolved = await fetchConversationById(finalConversationId)
+        if (resolved?.session_id) {
+          setActiveSessionId(resolved.session_id)
+        }
+      }
+
       await fetchConversations(1, false)
       requestAnimationFrame(() => scrollToBottom())
     } catch (err) {
@@ -542,6 +577,7 @@ export default function AdminChatPage() {
     activeSessionId,
     composer,
     fetchConversations,
+    fetchConversationById,
     getToken,
     scrollToBottom,
     sending,
@@ -593,8 +629,14 @@ export default function AdminChatPage() {
       if (found) {
         openConversation(found)
       } else {
-        toast.error('Conversation not found. Opening a new chat.')
-        startNewChat()
+        fetchConversationById(conversationFromUrl).then((fetched) => {
+          if (fetched) {
+            openConversation(fetched)
+          } else {
+            toast.error('Conversation not found. Opening a new chat.')
+            startNewChat()
+          }
+        })
       }
       initialConversationHydratedRef.current = true
       return
@@ -612,6 +654,7 @@ export default function AdminChatPage() {
     loadingConversations,
     openConversation,
     conversationFromUrl,
+    fetchConversationById,
     startNewChat,
   ])
 
@@ -623,7 +666,11 @@ export default function AdminChatPage() {
     const found = conversations.find((conversation) => conversation.id === conversationFromUrl)
     if (found) {
       openConversation(found)
+      return
     }
+    fetchConversationById(conversationFromUrl).then((fetched) => {
+      if (fetched) openConversation(fetched)
+    })
   }, [
     activeConversationId,
     conversations,
@@ -631,6 +678,7 @@ export default function AdminChatPage() {
     loadingConversations,
     openConversation,
     conversationFromUrl,
+    fetchConversationById,
   ])
 
   useEffect(() => {

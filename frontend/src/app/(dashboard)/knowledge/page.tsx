@@ -61,7 +61,7 @@ interface Conversation {
 
 export default function KnowledgePage() {
   const { token, isAuthenticated } = useAuth()
-  const [activeTab, setActiveTab] = useState('documents')
+  const [activeTab, setActiveTab] = useState('document')
   const [sources, setSources] = useState<KnowledgeSource[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [loading, setLoading] = useState(false)
@@ -80,7 +80,15 @@ export default function KnowledgePage() {
     client_id: '',
   })
 
-  const categories = ['documents', 'article', 'chat_session', 'client_document', 'training_material', 'reference']
+  const categories = ['document', 'article', 'chat_session', 'client_document', 'training_material', 'reference']
+  const categoryLabel: Record<string, string> = {
+    document: 'Documents',
+    article: 'Article',
+    chat_session: 'Chat Session',
+    client_document: 'Client Document',
+    training_material: 'Training Material',
+    reference: 'Reference',
+  }
 
   useEffect(() => {
     if (isAuthenticated && token) {
@@ -344,8 +352,7 @@ export default function KnowledgePage() {
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0">
           {categories.map((tab) => {
-            const label = tab.replace(/_/g, ' ')
-            return <TabsTrigger key={tab} value={tab}>{label.charAt(0).toUpperCase() + label.slice(1)}</TabsTrigger>
+            return <TabsTrigger key={tab} value={tab}>{categoryLabel[tab] || tab}</TabsTrigger>
           })}
         </TabsList>
       </Tabs>
@@ -354,7 +361,7 @@ export default function KnowledgePage() {
         <CardHeader>
           <CardTitle>Knowledge Sources</CardTitle>
           <CardDescription>
-            Category: <span className="capitalize">{activeTab.replace(/_/g, ' ')}</span>
+            Category: <span className="capitalize">{(categoryLabel[activeTab] || activeTab).toLowerCase()}</span>
           </CardDescription>
         </CardHeader>
         <CardContent>

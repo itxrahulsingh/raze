@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import Link from 'next/link'
 import { BookPlus, ChevronLeft, ChevronRight, Cpu, MessageSquare, Search, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -110,12 +111,35 @@ export default function ConversationsPage() {
     [getToken]
   )
 
+  const fetchConversationById = useCallback(
+    async (conversationId: string) => {
+      const authToken = getToken()
+      if (!authToken) return null
+      try {
+        const res = await fetch(`/api/v1/chat/conversations/${conversationId}`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+        if (!res.ok) return null
+        const conversation = (await res.json()) as ConversationDetail
+        setConversations((prev) => {
+          if (prev.some((item) => item.id === conversation.id)) return prev
+          return [conversation, ...prev]
+        })
+        return conversation
+      } catch {
+        return null
+      }
+    },
+    [getToken]
+  )
+
   const loadConversationMessages = useCallback(
     async (convId: string) => {
       const authToken = getToken()
       if (!authToken) return
 
       setLoadingMessages(true)
+      setError(null)
       setSelectedConvId(convId)
       syncConversationInUrl(convId)
 
@@ -201,34 +225,46 @@ export default function ConversationsPage() {
 
   useEffect(() => {
     if (!isAuthenticated || loadingList || initialHydratedRef.current) return
-    const convFromUrl = readConversationFromUrl()
-    if (convFromUrl) {
-      const found = conversations.find((item) => item.id === convFromUrl)
-      if (found) {
-        loadConversationMessages(found.id)
-      } else {
-        syncConversationInUrl('')
-      }
-      initialHydratedRef.current = true
-      return
+      const convFromUrl = readConversationFromUrl()
+      if (convFromUrl) {
+        const found = conversations.find((item) => item.id === convFromUrl)
+        if (found) {
+          loadConversationMessages(found.id)
+        } else {
+          fetchConversationById(convFromUrl).then((fetched) => {
+            if (fetched) {
+              loadConversationMessages(fetched.id)
+            } else {
+              syncConversationInUrl('')
+            }
+          })
+        }
+        initialHydratedRef.current = true
+        return
     }
 
     if (conversations.length > 0) {
       loadConversationMessages(conversations[0].id)
     }
     initialHydratedRef.current = true
-  }, [conversations, isAuthenticated, loadingList, loadConversationMessages])
+  }, [conversations, fetchConversationById, isAuthenticated, loadingList, loadConversationMessages])
 
   useEffect(() => {
     const onPopState = () => {
       const convFromUrl = readConversationFromUrl()
       if (!convFromUrl || convFromUrl === selectedConvId) return
       const found = conversations.find((item) => item.id === convFromUrl)
-      if (found) loadConversationMessages(found.id)
+      if (found) {
+        loadConversationMessages(found.id)
+        return
+      }
+      fetchConversationById(convFromUrl).then((fetched) => {
+        if (fetched) loadConversationMessages(fetched.id)
+      })
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
-  }, [conversations, loadConversationMessages, selectedConvId])
+  }, [conversations, fetchConversationById, loadConversationMessages, selectedConvId])
 
   const filteredConversations = useMemo(
     () =>
@@ -333,6 +369,9 @@ export default function ConversationsPage() {
                     <CardDescription>{new Date(selectedConversation.created_at).toLocaleString()}</CardDescription>
                   </div>
                   <div className="flex gap-2">
+                    <Link href={`/admin-chat?conversation=${selectedConvId}`}>
+                      <Button size="sm" variant="outline">Open in Admin Chat</Button>
+                    </Link>
                     <Button
                       size="sm"
                       variant="secondary"

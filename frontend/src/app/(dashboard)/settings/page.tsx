@@ -40,6 +40,13 @@ const PROVIDER_MODELS: Record<ProviderKey, string[]> = {
   grok: ['grok-2', 'grok-beta'],
 }
 
+const PROVIDER_KEYS: ProviderKey[] = ['openai', 'anthropic', 'gemini', 'ollama', 'grok']
+
+function toProviderKey(value: string | undefined | null): ProviderKey {
+  const normalized = (value || '').toLowerCase().trim()
+  return PROVIDER_KEYS.includes(normalized as ProviderKey) ? (normalized as ProviderKey) : 'openai'
+}
+
 export default function SettingsPage() {
   const [mainTab, setMainTab] = useState('ai-config')
   const [providerSetupTab, setProviderSetupTab] = useState<ProviderKey>('openai')
@@ -81,6 +88,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     fetchAiConfigs()
+    fetchProviderConfigs()
     fetchWhiteLabelSettings()
     fetchOllamaModels()
   }, [])
@@ -114,8 +122,9 @@ export default function SettingsPage() {
       const defaultConfig = data.find((item) => item.is_default) || data[0]
       if (!defaultConfig) return
 
-      const nextProvider = defaultConfig.provider
+      const nextProvider = toProviderKey(defaultConfig.provider)
       setProvider(nextProvider)
+      setProviderSetupTab(nextProvider)
       setModel(defaultConfig.model_name)
       setTemperature(defaultConfig.temperature ?? 0.7)
       setMaxTokens(defaultConfig.max_tokens ?? 2000)
@@ -123,6 +132,19 @@ export default function SettingsPage() {
       setRoutingStrategy(defaultConfig.routing_strategy || 'balanced')
     } catch {
       // keep UI stable with defaults
+    }
+  }
+
+  const fetchProviderConfigs = async () => {
+    try {
+      const res = await fetch('/api/v1/admin/provider-config', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` },
+      })
+      if (!res.ok) return
+      const data = (await res.json()) as Record<ProviderKey, ProviderConfig>
+      setProviderConfigs((prev) => ({ ...prev, ...data }))
+    } catch {
+      // keep defaults
     }
   }
 
@@ -162,6 +184,10 @@ export default function SettingsPage() {
 
   const handleProviderChange = (nextProvider: ProviderKey) => {
     setProvider(nextProvider)
+    const models = nextProvider === 'ollama' ? ollamaModels : PROVIDER_MODELS[nextProvider]
+    if (models.length > 0 && !models.includes(model)) {
+      setModel(models[0])
+    }
   }
 
   const handleSaveAIConfig = async () => {
@@ -274,7 +300,7 @@ export default function SettingsPage() {
               <div>
                 <p className="mb-2 text-sm font-medium">Provider</p>
                 <div className="grid gap-2 sm:grid-cols-3 lg:grid-cols-5">
-                  {(Object.keys(PROVIDER_MODELS) as ProviderKey[]).map((key) => (
+                  {PROVIDER_KEYS.map((key) => (
                     <Button
                       key={key}
                       variant={provider === key ? 'default' : 'outline'}
@@ -398,16 +424,16 @@ export default function SettingsPage() {
               <CardDescription>Each provider tab is isolated to prevent config mixups.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <Tabs value={providerSetupTab} onValueChange={(v) => setProviderSetupTab(v as ProviderKey)}>
+              <Tabs value={providerSetupTab} onValueChange={(v) => setProviderSetupTab(toProviderKey(v))}>
                 <TabsList className="h-auto w-full justify-start gap-2 bg-transparent p-0">
-                  {(Object.keys(PROVIDER_MODELS) as ProviderKey[]).map((key) => (
+                  {PROVIDER_KEYS.map((key) => (
                     <TabsTrigger key={key} value={key}>
                       {key.toUpperCase()}
                     </TabsTrigger>
                   ))}
                 </TabsList>
 
-                {(Object.keys(PROVIDER_MODELS) as ProviderKey[]).map((key) => (
+                {PROVIDER_KEYS.map((key) => (
                   <TabsContent key={key} value={key} className="pt-4">
                     <div className="space-y-3 rounded-xl border border-border/70 p-4">
                       <p className="text-sm font-semibold">{key.toUpperCase()} Credentials</p>

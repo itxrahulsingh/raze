@@ -123,6 +123,33 @@ export default function ChatSDKPage() {
     setActiveSecretDomainId(domainId)
   }
 
+  const toggleKeyVisibility = (domainId: string) => {
+    setSecretsByDomain((prev) => {
+      const current = prev[domainId]
+      if (!current) return prev
+      const nextVisible = !current.visible
+      if (nextVisible) {
+        window.setTimeout(() => {
+          setSecretsByDomain((latest) => {
+            const latestSecret = latest[domainId]
+            if (!latestSecret || !latestSecret.visible) return latest
+            return {
+              ...latest,
+              [domainId]: { ...latestSecret, visible: false },
+            }
+          })
+        }, 20000)
+      }
+      return {
+        ...prev,
+        [domainId]: {
+          ...current,
+          visible: nextVisible,
+        },
+      }
+    })
+  }
+
   const handleRegisterDomain = async () => {
     if (!formData.domain || !formData.display_name) {
       toast.error('Domain and display name are required')
@@ -266,6 +293,16 @@ export default function ChatSDKPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="rounded-xl border border-border/70 bg-card/60 p-3">
+            <p className="text-xs text-muted-foreground">API base URL</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <code className="min-w-0 flex-1 break-all text-xs">{baseUrl}/api/v1</code>
+              <Button size="sm" variant="outline" onClick={() => writeClipboard(`${baseUrl}/api/v1`, 'API base URL')}>
+                <Copy className="mr-1.5 h-3.5 w-3.5" />
+                Copy API URL
+              </Button>
+            </div>
+          </div>
+          <div className="rounded-xl border border-border/70 bg-card/60 p-3">
             <p className="text-xs text-muted-foreground">Widget script URL</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <code className="min-w-0 flex-1 break-all text-xs">{baseUrl}/raze-chat-widget.js</code>
@@ -330,15 +367,7 @@ export default function ChatSDKPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() =>
-                              setSecretsByDomain((prev) => ({
-                                ...prev,
-                                [domain.id]: {
-                                  ...prev[domain.id],
-                                  visible: !prev[domain.id].visible,
-                                },
-                              }))
-                            }
+                            onClick={() => toggleKeyVisibility(domain.id)}
                           >
                             {secret.visible ? <EyeOff className="mr-1.5 h-3.5 w-3.5" /> : <Eye className="mr-1.5 h-3.5 w-3.5" />}
                             {secret.visible ? 'Hide' : 'Reveal'}
@@ -363,6 +392,8 @@ export default function ChatSDKPage() {
                         <p className="mt-2 text-xs text-muted-foreground">
                           Keys are shown only once. Use regenerate when you need to reveal a new key.
                         </p>
+                      ) : secret.visible ? (
+                        <p className="mt-2 text-xs text-muted-foreground">Auto-hide enabled after 20 seconds.</p>
                       ) : null}
                     </div>
 
