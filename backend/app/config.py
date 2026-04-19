@@ -112,6 +112,12 @@ class Settings(BaseSettings):
     ollama_default_model: str = "mistral"
     ollama_enabled: bool = True
 
+    # ── Web Search (Free - DuckDuckGo API, no key required) ──────────────────
+    web_search_enabled: bool = True
+    web_search_timeout: float = 5.0
+    web_search_max_results: int = 5
+    # DuckDuckGo is free and requires no API key
+
     # ── Qdrant ───────────────────────────────────────────────────────────────
     qdrant_url: str = Field(
         default="http://qdrant:6333",

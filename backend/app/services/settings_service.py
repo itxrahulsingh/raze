@@ -78,6 +78,9 @@ class SettingsService:
                 "require_source_approval": settings.require_source_approval,
                 "auto_approve_sources": settings.auto_approve_sources,
                 "max_file_size_mb": settings.max_file_size_mb,
+                "web_search_engine": settings.web_search_engine,
+                "web_search_max_results": settings.web_search_max_results,
+                "include_web_search_in_chat": settings.include_web_search_in_chat,
             }
 
             try:
@@ -150,5 +153,8 @@ class SettingsService:
             "enable_knowledge_base": True,
             "enable_web_search": True,
             "enable_memory": True,
+            "web_search_engine": "duckduckgo",
+            "web_search_max_results": 5,
+            "include_web_search_in_chat": True,
         }
         return await self.update_settings(defaults)

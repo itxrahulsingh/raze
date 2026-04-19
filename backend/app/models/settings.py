@@ -59,6 +59,11 @@ class AppSettings(Base):
     enable_memory: Mapped[bool] = mapped_column(Boolean, default=True)
     enable_voice: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # Web Search Settings (DuckDuckGo - free, no key needed)
+    web_search_engine: Mapped[str] = mapped_column(String(50), default="duckduckgo")  # free and open
+    web_search_max_results: Mapped[int] = mapped_column(default=5)
+    include_web_search_in_chat: Mapped[bool] = mapped_column(Boolean, default=True)
+
     # Knowledge Base
     require_source_approval: Mapped[bool] = mapped_column(Boolean, default=False)
     auto_approve_sources: Mapped[bool] = mapped_column(Boolean, default=True)

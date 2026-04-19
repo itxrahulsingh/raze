@@ -144,10 +144,10 @@ async def get_setup_status(
         status_report["ready"] = False
 
     # Check Web Search capability
-    web_search_available = settings.google_api_key is not None
-    status_report["components"]["web_search"] = "configured" if web_search_available else "unconfigured"
-    if not web_search_available:
-        status_report["errors"].append("Web Search: Not configured (optional)")
+    # DuckDuckGo is free and always available - no key required
+    web_search_available = True  # Always available with DuckDuckGo
+    status_report["components"]["web_search"] = "healthy"
+    status_report["components"]["web_search_engine"] = "duckduckgo (free, no key required)"
 
     # Get current app settings
     from app.models.settings import AppSettings

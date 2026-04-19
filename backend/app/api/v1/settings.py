@@ -58,6 +58,9 @@ async def get_settings(
         "enable_knowledge_base": settings.get("enable_knowledge_base", True),
         "enable_web_search": settings.get("enable_web_search", True),
         "enable_memory": settings.get("enable_memory", True),
+        "web_search_engine": settings.get("web_search_engine", "duckduckgo"),
+        "web_search_max_results": settings.get("web_search_max_results", 5),
+        "include_web_search_in_chat": settings.get("include_web_search_in_chat", True),
     }
 
 
