@@ -116,7 +116,7 @@ class SettingsService:
             # Update fields
             for key, value in updates.items():
                 if hasattr(settings, key):
-                    if key == "chat_suggestions" and isinstance(value, list):
+                    if key in ("chat_suggestions", "industry_topics") and isinstance(value, list):
                         setattr(settings, key, json.dumps(value))
                     else:
                         setattr(settings, key, value)
@@ -130,12 +130,12 @@ class SettingsService:
                 await self.redis.delete(SETTINGS_CACHE_KEY)
                 logger.info("settings.cache_invalidated")
             except Exception as e:
-                logger.warning("settings.cache_delete_failed", error=str(e))
+                logger.warning("settings.cache_delete_failed", exc_info=True)
 
             logger.info("settings.updated", keys=list(updates.keys()))
             return settings
         except Exception as e:
-            logger.error("settings.update_failed", error=str(e))
+            logger.exception("settings.update_failed")
             raise
 
     async def get_setting(self, key: str) -> Any:
